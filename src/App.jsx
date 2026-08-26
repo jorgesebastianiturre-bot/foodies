@@ -275,6 +275,7 @@ export default function FoodiesApp() {
   const [ifDesde, setIfDesde] = useState(""); const [ifHasta, setIfHasta] = useState(""); const [ifVendedor, setIfVendedor] = useState(""); const [ifTurno, setIfTurno] = useState(""); const [ifTipo, setIfTipo] = useState("");
   const [pfNombre, setPfNombre] = useState(""); const [pfPrecio, setPfPrecio] = useState(""); const [pfEdit, setPfEdit] = useState(null); const [bProd, setBProd] = useState("");
   const [prodTab, setProdTab] = useState("gestion");
+  const [taComandaInicial, setTaComandaInicial] = useState("");
   const [stock, setStock] = useState([]);
   const [stockMovs, setStockMovs] = useState([]);
   const [stockTab, setStockTab] = useState("panel");
@@ -754,19 +755,83 @@ export default function FoodiesApp() {
     html += ".danger{background:#fef2f2;border:1px solid #ef4444;border-radius:8px;padding:14px;color:#991b1b}";
     html += ".resumen{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.box{border:1px solid #ddd;border-radius:6px;padding:10px;text-align:center}";
     html += ".box .v{font-size:18px;font-weight:800}.box .l{font-size:10px;color:#666;text-transform:uppercase}</style></head><body>";
+    // Calculos para el reporte
+    const totalEfectivo = factDia.reduce((s,f)=>s+(f.medioPago1==="Efectivo"?parseFloat(f.importe1)||0:0)+(f.medioPago2==="Efectivo"?parseFloat(f.importe2)||0:0),0);
+    const totalTransfer = factDia.reduce((s,f)=>s+(f.medioPago1==="Transferencia"?parseFloat(f.importe1)||0:0)+(f.medioPago2==="Transferencia"?parseFloat(f.importe2)||0:0),0);
+    const totalCC = factDia.reduce((s,f)=>s+(f.medioPago1==="Cuenta Corriente"?parseFloat(f.importe1)||0:0)+(f.medioPago2==="Cuenta Corriente"?parseFloat(f.importe2)||0:0),0);
+    const totalVentas = totalEfectivo + totalTransfer + totalCC;
+    const trConf = factDia.filter(f=>tieneTransfer(f)&&f.transferConfirmada===true);
+    const trConfMonto = trConf.reduce((s,f)=>s+montoTransfer(f),0);
+    const trPendMonto = trPend.reduce((s,f)=>s+montoTransfer(f),0);
+    const gastosT = grDia.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+g.monto,0);
+    const retirosT = grDia.filter(g=>g.tipo==="Retiro").reduce((s,g)=>s+g.monto,0);
+    const sumaFisica = cierre.efectivoContado + gastosT + retirosT;
+    const difEf = sumaFisica - totalEfectivo;
+
     html += "<h1>FOODIES LK</h1><div class='sub'>Cierre — "+cierre.fecha+" · Turno "+cierre.turno+"</div>";
-    html += "<h2>🧮 Evaluación de Caja</h2>";
-    if(todoCuadra) html += "<div class='ok'>✓ LA CAJA CUADRA</div>";
-    else { html += "<div class='danger'><b>⚠️ LA CAJA NO CUADRA</b><ul>"; if(!cuadraEf) html += "<li>Efectivo: "+(cierre.diferencia>0?"sobran "+fmt(cierre.diferencia):"faltan "+fmt(Math.abs(cierre.diferencia)))+"</li>"; if(!cuadraTransf) html += "<li>Transferencia: "+fmt(cierre.transferPendiente)+" sin confirmar</li>"; html += "</ul></div>"; }
-    html += "<table style='margin-top:12px'><tr><td>Efectivo según sistema</td><td style='text-align:right'>"+fmt(cierre.efectivo)+"</td></tr>";
-    html += "<tr><td>Efectivo contado + Gastos + Retiros</td><td style='text-align:right'>"+fmt(cierre.efectivoEsperado)+"</td></tr>";
-    html += "<tr style='font-weight:bold'><td>Diferencia</td><td style='text-align:right;color:"+(cuadraEf?"#16a34a":"#dc2626")+"'>"+( cuadraEf?"✓ Cuadra":(cierre.diferencia>0?"+"+fmt(cierre.diferencia):fmt(cierre.diferencia)) )+"</td></tr></table>";
-    html += "<h2>📲 Transferencias Pendientes</h2>";
-    if(trPend.length===0) html += "<p style='color:#16a34a;font-weight:700'>✓ Sin pendientes</p>";
-    else { html += "<table><thead><tr><th>N°</th><th>Comanda</th><th>Vendedor</th><th>Monto</th></tr></thead><tbody>"; trPend.forEach(f=>{html += "<tr><td>#"+f.numero+"</td><td>"+(f.comanda!=="—"?"#"+f.comanda:"—")+"</td><td>"+f.vendedor+"</td><td style='text-align:right'>"+fmt(montoTransfer(f))+"</td></tr>";}); html += "</tbody></table>"; }
-    html += "<h2>💸 Gastos y Retiros</h2>";
-    if(grDia.length===0) html += "<p style='color:#666'>Sin registros</p>";
-    else { html += "<table><thead><tr><th>Hora</th><th>Tipo</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>"; grDia.forEach(g=>{html += "<tr><td>"+g.hora+"</td><td>"+g.tipo+"</td><td>"+g.concepto+"</td><td style='text-align:right'>"+fmt(g.monto)+"</td></tr>";}); html += "</tbody></table>"; }
+
+    // ══ SECCIÓN 1: TOTAL VENTAS DEL TURNO ══
+    html += "<h2>💰 TOTAL VENTAS DEL TURNO</h2>";
+    html += "<table>";
+    html += "<tr style='background:#e8f5e9'><td><b>💵 Efectivo</b></td><td style='text-align:right;font-weight:700'>"+fmt(totalEfectivo)+"</td></tr>";
+    html += "<tr style='background:#e3f2fd'><td><b>📲 Transferencia</b></td><td style='text-align:right;font-weight:700'>"+fmt(totalTransfer)+"</td></tr>";
+    if(totalCC>0) html += "<tr style='background:#ede7f6'><td><b>🏦 Cuenta Corriente</b></td><td style='text-align:right;font-weight:700'>"+fmt(totalCC)+"</td></tr>";
+    html += "<tr style='background:#fff3e0;font-size:16px'><td><b>TOTAL VENDIDO</b></td><td style='text-align:right;font-weight:900'>"+fmt(totalVentas)+"</td></tr>";
+    html += "</table>";
+
+    // ══ SECCIÓN 2: EFECTIVO ══
+    html += "<h2>💵 EFECTIVO</h2>";
+    html += "<table>";
+    html += "<tr><td>Venta en efectivo (sistema)</td><td style='text-align:right;font-weight:700'>"+fmt(totalEfectivo)+"</td></tr>";
+    html += "<tr style='border-top:2px solid #ddd'><td>Efectivo físico contado</td><td style='text-align:right;font-weight:700'>"+fmt(cierre.efectivoContado)+"</td></tr>";
+    if(gastosT>0) html += "<tr><td>&nbsp;&nbsp;+ Gastos del turno</td><td style='text-align:right;color:#dc2626'>"+fmt(gastosT)+"</td></tr>";
+    if(retirosT>0) html += "<tr><td>&nbsp;&nbsp;+ Retiros del turno</td><td style='text-align:right;color:#f59e0b'>"+fmt(retirosT)+"</td></tr>";
+    html += "<tr style='background:#e8f5e9'><td><b>Suma (físico + gastos + retiros)</b></td><td style='text-align:right;font-weight:700'>"+fmt(sumaFisica)+"</td></tr>";
+    const colorDifEf = difEf===0?"#16a34a":difEf>0?"#16a34a":"#dc2626";
+    html += "<tr style='border-top:2px solid #111;font-weight:900'><td>DIFERENCIA</td><td style='text-align:right;color:"+colorDifEf+"'>"+(difEf===0?"✓ CUADRA":(difEf>0?"+"+fmt(difEf)+" (SOBRA)":fmt(difEf)+" (FALTA)"))+"</td></tr>";
+    html += "</table>";
+    if(grDia.length>0){
+      html += "<p style='font-size:11px;color:#666;margin-top:4px'><b>Detalle gastos/retiros:</b> ";
+      grDia.forEach(g=>{html += g.hora+" "+g.tipo+": "+g.concepto+" "+fmt(g.monto)+" · ";});
+      html += "</p>";
+    }
+
+    // ══ SECCIÓN 3: TRANSFERENCIAS ══
+    html += "<h2>📲 TRANSFERENCIAS</h2>";
+    html += "<table>";
+    html += "<tr><td>Total transferencias del turno</td><td style='text-align:right;font-weight:700'>"+fmt(totalTransfer)+"</td></tr>";
+    html += "<tr style='color:#16a34a'><td>&nbsp;&nbsp;✅ Confirmadas ("+trConf.length+")</td><td style='text-align:right;font-weight:700'>"+fmt(trConfMonto)+"</td></tr>";
+    html += "<tr style='color:#dc2626'><td>&nbsp;&nbsp;⏳ Pendientes ("+trPend.length+")</td><td style='text-align:right;font-weight:700'>"+fmt(trPendMonto)+"</td></tr>";
+    html += "</table>";
+    if(trPend.length>0){
+      html += "<p style='font-weight:700;color:#dc2626;margin-top:8px'>⚠️ Transferencias pendientes de confirmar:</p>";
+      html += "<table><thead><tr><th>N° Fact.</th><th>Comanda</th><th>Cliente</th><th>Vendedor</th><th>Monto</th></tr></thead><tbody>";
+      trPend.forEach(f=>{
+        html += "<tr style='background:#fef2f2'>";
+        html += "<td>#"+f.numero+"</td>";
+        html += "<td>"+(f.comanda!=="—"?"#"+f.comanda:"—")+"</td>";
+        html += "<td>"+(f.cliente||"—")+"</td>";
+        html += "<td>"+f.vendedor+"</td>";
+        html += "<td style='text-align:right;font-weight:700;color:#dc2626'>"+fmt(montoTransfer(f))+"</td>";
+        html += "</tr>";
+      });
+      html += "</tbody></table>";
+    }
+
+    // ══ SECCIÓN 4: CUENTA CORRIENTE (si aplica) ══
+    if(totalCC>0){
+      const facturasCC = factDia.filter(f=>(f.medioPago1==="Cuenta Corriente"||(f.medioPago2==="Cuenta Corriente"&&f.importe2>0)));
+      html += "<h2>🏦 CUENTA CORRIENTE</h2>";
+      html += "<table>";
+      html += "<tr><td>Total en Cuenta Corriente</td><td style='text-align:right;font-weight:700'>"+fmt(totalCC)+"</td></tr>";
+      html += "</table>";
+      html += "<table><thead><tr><th>N° Fact.</th><th>Comanda</th><th>Cliente</th><th>Monto CC</th></tr></thead><tbody>";
+      facturasCC.forEach(f=>{
+        const montoCC=(f.medioPago1==="Cuenta Corriente"?parseFloat(f.importe1)||0:0)+(f.medioPago2==="Cuenta Corriente"?parseFloat(f.importe2)||0:0);
+        html += "<tr><td>#"+f.numero+"</td><td>"+(f.comanda!=="—"?"#"+f.comanda:"—")+"</td><td>"+(f.cliente||"—")+"</td><td style='text-align:right;font-weight:700'>"+fmt(montoCC)+"</td></tr>";
+      });
+      html += "</tbody></table>";
+    }
     if(difTransfer.length>0){
       html += "<h2 style='color:"+(sumaDifTransfer>=0?"#16a34a":"#dc2626")+"'>📲 Diferencias en Transferencias</h2>";
       html += "<table><thead><tr><th>N°</th><th>Comanda</th><th>Cliente</th><th>Total comanda</th><th>Transfirió</th><th>Diferencia</th></tr></thead><tbody>";
@@ -1299,13 +1364,25 @@ export default function FoodiesApp() {
                       <option value="Noche">Noche</option>
                     </select>
                   </div>
+                  <div style={{textAlign:"left"}}>
+                    <div style={css.lbl}>N° comanda inicial</div>
+                    {(()=>{
+                      const ultimaComanda = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
+                      const ultimaNum = ultimaComanda?parseInt(ultimaComanda.comanda):null;
+                      return <div>
+                        <input id="ta-comanda" type="number" style={{...css.input,minWidth:130}} placeholder="Ej: 142"/>
+                        {ultimaNum&&<div style={{fontSize:10,color:"#f59e0b",marginTop:3}}>⚠️ Última comanda registrada: <b>#{ultimaNum}</b> ({ultimaComanda.fecha})</div>}
+                      </div>;
+                    })()}
+                  </div>
                 </div>
                 <button style={{...css.btn(),padding:"12px 32px",fontSize:15}} onClick={()=>{
                   const vend = document.getElementById("ta-vendedor")?.value;
                   const turn = document.getElementById("ta-turno")?.value;
                   const fecha = document.getElementById("ta-fecha")?.value || hoy();
                   if(!vend){ alert("Seleccioná un vendedor"); return; }
-                  const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})};
+                  const comandaIni = document.getElementById("ta-comanda")?.value;
+                  const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), comandaInicial:parseInt(comandaIni)||null};
                   setTurnoActivoPersistente(ta);
                   setNf(emptyNf(ta));
                   setBVendedor(vend);
@@ -1313,11 +1390,21 @@ export default function FoodiesApp() {
                 }}>✅ Iniciar Turno</button>
               </div>
             : <div style={{background:"#0f2a0f",border:`1px solid ${C.success}`,borderRadius:10,padding:"10px 16px",marginBottom:4,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{display:"flex",gap:16,alignItems:"center"}}>
+                <div style={{display:"flex",gap:16,alignItems:"center",flex:1}}>
                   <span style={{fontSize:18}}>🟢</span>
-                  <div>
+                  <div style={{flex:1}}>
                     <div style={{fontWeight:800,color:C.success,fontSize:14}}>Turno Activo — {turnoActivo.turno}</div>
-                    <div style={{fontSize:12,color:C.muted}}>Vendedor: <b style={{color:C.text}}>{turnoActivo.vendedor}</b> · Inicio: {turnoActivo.hora}</div>
+                    <div style={{fontSize:12,color:C.muted}}>Vendedor: <b style={{color:C.text}}>{turnoActivo.vendedor}</b> · Inicio: {turnoActivo.hora}{turnoActivo.comandaInicial?<span style={{color:"#f59e0b"}}> · Comanda inicial: <b>#{turnoActivo.comandaInicial}</b></span>:null}</div>
+                    {(()=>{
+                      if(!turnoActivo.comandaInicial) return null;
+                      const ultimaAnterior = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))&&(f.fecha<turnoActivo.fecha||(f.fecha===turnoActivo.fecha&&f.turno!==turnoActivo.turno))).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
+                      if(!ultimaAnterior) return null;
+                      const ultimaNum = parseInt(ultimaAnterior.comanda);
+                      const salto = turnoActivo.comandaInicial - ultimaNum - 1;
+                      if(salto===0) return <div style={{fontSize:11,color:C.success}}>✅ Correlatividad OK — continuación de #{ultimaNum}</div>;
+                      if(salto>0) return <div style={{fontSize:11,color:C.danger}}>⚠️ Salto de {salto} comanda{salto>1?"s":""} — última del turno anterior: #{ultimaNum}</div>;
+                      return null;
+                    })()}
                   </div>
                 </div>
                 <button style={{...css.btn("neutral"),padding:"6px 14px",fontSize:12}} onClick={()=>{
