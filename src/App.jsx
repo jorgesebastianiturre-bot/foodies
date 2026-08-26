@@ -401,7 +401,8 @@ export default function FoodiesApp() {
         efectivo:parseFloat(c.efectivo)||0, transferConfirmada:parseFloat(c.transfer_confirmada)||0,
         transferPendiente:parseFloat(c.transfer_pendiente)||0, cuentaCorriente:parseFloat(c.cuenta_corriente)||0,
         efectivoContado:parseFloat(c.efectivo_contado)||0, gastosContado:parseFloat(c.gastos)||0, retiros:parseFloat(c.retiros)||0,
-        efectivoEsperado:parseFloat(c.efectivo_esperado)||0, diferencia:parseFloat(c.diferencia)||0, obs:c.obs||""
+        efectivoEsperado:parseFloat(c.efectivo_esperado)||0, diferencia:parseFloat(c.diferencia)||0, obs:c.obs||"",
+        comandaInicial:c.comanda_inicial||null
       })));
     } catch(e) { console.error("cierres:",e); }
 
@@ -721,8 +722,24 @@ export default function FoodiesApp() {
     const comandasNum = factTurnoTodas.map(f=>f.comanda).filter(x=>x&&x!=="—"&&!isNaN(parseInt(x))).map(x=>parseInt(x));
     const conteo = {}; comandasNum.forEach(n=>{conteo[n]=(conteo[n]||0)+1;});
     const nums = Object.keys(conteo).map(Number).sort((a,b)=>a-b);
-    const faltantes=[],incompletos=[];
-    if(nums.length>0){for(let n=nums[0];n<=nums[nums.length-1];n++){const cant=conteo[n]||0;if(cant===0)faltantes.push(n);else if(cant===1)incompletos.push(n);}}
+    // Usar comanda inicial del turno si está registrada
+    const cmdInicial = cierre.comandaInicial || (nums.length>0?nums[0]:null);
+    const cmdFinal = nums.length>0?nums[nums.length-1]:null;
+    const faltantes=[],incompletos=[],saltosGraves=[];
+    if(cmdInicial&&cmdFinal){
+      for(let n=cmdInicial;n<=cmdFinal;n++){
+        const cant=conteo[n]||0;
+        if(cant===0) faltantes.push(n); // No aparece en ningún turno/mañana/noche
+        else if(cant===1) incompletos.push(n); // Solo aparece una vez (debería ser 2: mañana y noche)
+      }
+      // Detectar saltos grandes (más de 3 consecutivas)
+      let inicio=null;
+      for(let n=cmdInicial;n<=cmdFinal;n++){
+        if((conteo[n]||0)===0){if(!inicio)inicio=n;}
+        else{if(inicio&&n-inicio>=3)saltosGraves.push({desde:inicio,hasta:n-1,cant:n-inicio});inicio=null;}
+      }
+      if(inicio&&cmdFinal-inicio>=2)saltosGraves.push({desde:inicio,hasta:cmdFinal,cant:cmdFinal-inicio+1});
+    }
     const hayProblemas = faltantes.length>0||incompletos.length>0;
     const difTransfer = factDia.filter(f=>{
       const tr=(f.medioPago1==="Transferencia"?(parseFloat(f.importe1)||0):0)+(f.medioPago2==="Transferencia"?(parseFloat(f.importe2)||0):0);
@@ -845,12 +862,62 @@ export default function FoodiesApp() {
       const tdif = difPrecios.reduce((s,x)=>s+x.diferencia,0);
       html += "</tbody><tfoot><tr style='border-top:2px solid #111;font-weight:bold'><td colspan='6'>IMPACTO TOTAL</td><td style='color:"+(tdif>=0?"#16a34a":"#dc2626")+"'>"+(tdif>0?"+":"")+fmt(tdif)+"</td></tr></tfoot></table>";
     }
-    html += "<h2>🔢 Correlatividad de Comandas</h2>";
-    if(nums.length===0) html += "<p style='color:#666'>Sin comandas numéricas</p>";
-    else {
-      html += "<p style='font-size:12px;color:#666'>Rango: #"+nums[0]+" a #"+nums[nums.length-1]+" (cada comanda debe aparecer 2 veces)</p>";
-      if(hayProblemas){ html += "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px'>"; if(faltantes.length>0) html += "<div style='border:1px solid #ef4444;background:#fef2f2;border-radius:6px;padding:10px'><b style='color:#991b1b'>❌ Faltan ("+faltantes.length+")</b><br>"+faltantes.map(n=>"#"+n).join(", ")+"</div>"; if(incompletos.length>0) html += "<div style='border:1px solid #f97316;background:#fff7ed;border-radius:6px;padding:10px'><b style='color:#9a3412'>⚠️ Solo 1 vez ("+incompletos.length+")</b><br>"+incompletos.map(n=>"#"+n).join(", ")+"</div>"; html += "</div>"; }
-      else html += "<p style='color:#16a34a;font-weight:700'>✓ Correlatividad completa</p>";
+    html += "<h2>🔢 CORRELATIVIDAD DE COMANDAS</h2>";
+    if(!cmdInicial||!cmdFinal) {
+      html += "<div style='background:#fef9c3;border:1px solid #eab308;border-radius:8px;padding:12px;color:#854d0e'>";
+      html += "<b>⚠️ No se registró comanda inicial al abrir el turno.</b><br>";
+      html += "<span style='font-size:12px'>Sin ese dato no se puede verificar si faltan comandas. Registrar la comanda inicial es OBLIGATORIO al iniciar cada turno.</span>";
+      html += "</div>";
+    } else {
+      const totalRango = cmdFinal - cmdInicial + 1;
+      html += "<div style='background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:10px'>";
+      html += "<table style='border:none'>";
+      html += "<tr><td style='border:none;color:#555'>Comanda inicial del turno</td><td style='border:none;font-weight:700'>#"+cmdInicial+"</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Última comanda del turno</td><td style='border:none;font-weight:700'>#"+cmdFinal+"</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Total comandas en rango</td><td style='border:none;font-weight:700'>"+totalRango+"</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Comandas registradas</td><td style='border:none;font-weight:700'>"+nums.length+"</td></tr>";
+      html += "</table></div>";
+
+      if(!hayProblemas) {
+        html += "<div style='background:#f0fdf4;border:2px solid #22c55e;border-radius:8px;padding:16px;text-align:center'>";
+        html += "<div style='font-size:22px'>✅</div>";
+        html += "<div style='font-weight:900;color:#166534;font-size:16px'>CORRELATIVIDAD CONFIRMADA</div>";
+        html += "<div style='color:#15803d;font-size:12px;margin-top:4px'>Todas las comandas del #"+cmdInicial+" al #"+cmdFinal+" están registradas correctamente.</div>";
+        html += "</div>";
+      } else {
+        html += "<div style='background:#fef2f2;border:2px solid #ef4444;border-radius:8px;padding:14px;margin-bottom:12px'>";
+        html += "<div style='font-size:18px;font-weight:900;color:#991b1b;margin-bottom:8px'>🚨 ALERTA: SE DETECTARON IRREGULARIDADES</div>";
+
+        if(saltosGraves.length>0) {
+          html += "<div style='background:#7f1d1d;color:#fecaca;border-radius:6px;padding:10px;margin-bottom:10px'>";
+          html += "<b>🔴 SALTOS GRAVES (más de 2 comandas seguidas sin registrar):</b><br>";
+          saltosGraves.forEach(s=>{
+            html += "• Del #"+s.desde+" al #"+s.hasta+" — "+s.cant+" comandas DESAPARECIDAS<br>";
+          });
+          html += "</div>";
+        }
+
+        if(faltantes.length>0) {
+          html += "<div style='margin-bottom:10px'>";
+          html += "<b style='color:#991b1b'>❌ Comandas que NO aparecen en el sistema ("+faltantes.length+"):</b><br>";
+          html += "<div style='font-family:monospace;margin-top:4px;font-size:13px'>"+faltantes.map(n=>"#"+n).join(" · ")+"</div>";
+          html += "</div>";
+        }
+
+        if(incompletos.length>0) {
+          html += "<div style='margin-bottom:6px'>";
+          html += "<b style='color:#9a3412'>⚠️ Comandas que aparecen solo 1 vez ("+incompletos.length+") — deberían aparecer en ambos turnos:</b><br>";
+          html += "<div style='font-family:monospace;margin-top:4px;font-size:13px'>"+incompletos.map(n=>"#"+n).join(" · ")+"</div>";
+          html += "</div>";
+        }
+
+        html += "<div style='margin-top:10px;padding-top:10px;border-top:1px solid #fca5a5;font-size:12px;color:#7f1d1d'>";
+        html += "<b>RESUMEN:</b> De "+totalRango+" comandas esperadas, "+faltantes.length+" no están en el sistema";
+        if(incompletos.length>0) html += " y "+incompletos.length+" aparecen incompletas";
+        html += ". Verificar con el personal del turno.";
+        html += "</div>";
+        html += "</div>";
+      }
     }
     html += "<h2>🛒 Top 10 Artículos</h2>";
     if(topProductos.length===0) html += "<p style='color:#666'>Sin datos</p>";
@@ -882,14 +949,16 @@ export default function FoodiesApp() {
     const id = gid();
     const cr = {id,fecha:cierreFecha,turno:cierreTurno,facturas:factCierre.length,
       efectivo:cierreEf,transferConfirmada:cierreTrConf,transferPendiente:cierreTrPendMonto,
-      cuentaCorriente:cierreCC,efectivoContado,gastosContado,retiros:retirosContado,efectivoEsperado,diferencia:difCaja,obs:cierreObs};
+      cuentaCorriente:cierreCC,efectivoContado,gastosContado,retiros:retirosContado,efectivoEsperado,diferencia:difCaja,obs:cierreObs,
+      comandaInicial:turnoActivo?.comandaInicial||null};
     if(grTurno.length>0){
       await supabase.from("gastos_retiros").update({cierre_id:id}).in("id",grTurno.map(g=>g.id));
       setGastosRetiros(prev=>prev.map(g=>grTurno.find(x=>x.id===g.id)?{...g,cierreId:id}:g));
     }
     await supabase.from("cierres_caja").insert({id,fecha:cierreFecha,turno:cierreTurno,facturas_count:factCierre.length,
       efectivo:cierreEf,transfer_confirmada:cierreTrConf,transfer_pendiente:cierreTrPendMonto,cuenta_corriente:cierreCC,
-      efectivo_contado:efectivoContado,gastos:gastosContado,retiros:retirosContado,efectivo_esperado:efectivoEsperado,diferencia:difCaja,obs:cierreObs});
+      efectivo_contado:efectivoContado,gastos:gastosContado,retiros:retirosContado,efectivo_esperado:efectivoEsperado,diferencia:difCaja,obs:cierreObs,
+      comanda_inicial:turnoActivo?.comandaInicial||null});
     setCierres(prev=>[cr,...prev]); setCierreEfectivo(""); setCierreObs("");
     // Cerrar el turno automáticamente al guardar el cierre
     setTurnoActivoPersistente(null);
