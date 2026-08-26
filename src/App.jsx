@@ -276,6 +276,9 @@ export default function FoodiesApp() {
   const [pfNombre, setPfNombre] = useState(""); const [pfPrecio, setPfPrecio] = useState(""); const [pfEdit, setPfEdit] = useState(null); const [bProd, setBProd] = useState("");
   const [prodTab, setProdTab] = useState("gestion");
   const [taComandaInicial, setTaComandaInicial] = useState("");
+  const [alertaToken, setAlertaToken] = useState(null); // token de autorización pendiente
+  const [alertaEsperando, setAlertaEsperando] = useState(false); // esperando que el admin autorice
+  const [alertaId, setAlertaId] = useState(null);
   const [stock, setStock] = useState([]);
   const [stockMovs, setStockMovs] = useState([]);
   const [stockTab, setStockTab] = useState("panel");
@@ -1410,7 +1413,50 @@ export default function FoodiesApp() {
         {tab==="nueva"&&esVentas&&<>
 
           {/* ══ INICIO DE TURNO ══ */}
-          {!turnoActivo
+          {/* ══ PANTALLA DE ESPERA DE AUTORIZACIÓN ══ */}
+          {alertaEsperando&&!turnoActivo&&(()=>{
+            // Polling cada 5 segundos para ver si el admin autorizó
+            const checkAuth = async () => {
+              if(!alertaToken) return;
+              try {
+                const resp = await fetch(`https://aauifejcgrmkobemhkbx.supabase.co/functions/v1/autorizar-comanda?action=verificar&token=${alertaToken}`, {
+                  headers: {'apikey':'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdWlmZWpjZ3Jta29iZW1oa2J4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDAyMzAsImV4cCI6MjA5MTE3NjIzMH0.Ehhj2YK11CkzefbuZQt2vGfcExj8Q5NUdBBmikO9Llg'}
+                });
+                const data = await resp.json();
+                if(data?.estado==="autorizado") {
+                  setAlertaEsperando(false);
+                  setAlertaToken(null);
+                  // Recuperar datos del formulario y continuar
+                  const vend = document.getElementById("ta-vendedor")?.value;
+                  const turn = document.getElementById("ta-turno")?.value;
+                  const fecha = document.getElementById("ta-fecha")?.value||hoy();
+                  const comandaNum = parseInt(document.getElementById("ta-comanda")?.value)||null;
+                  if(vend){
+                    const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), comandaInicial:comandaNum};
+                    setTurnoActivoPersistente(ta);
+                    setNf(emptyNf(ta));
+                    setBVendedor(vend);
+                    setBTurno(turn);
+                  }
+                }
+              } catch(e) {}
+            };
+            return <div style={{...css.card,border:`2px solid ${C.danger}`,textAlign:"center",padding:"32px 24px"}}>
+              <div style={{fontSize:48,marginBottom:12}}>🔒</div>
+              <div style={{fontSize:20,fontWeight:800,color:C.danger,marginBottom:8}}>TURNO BLOQUEADO</div>
+              <div style={{fontSize:14,color:C.muted,marginBottom:20}}>Se detectó una diferencia en la correlatividad de comandas.<br/>Se envió un mail al administrador para autorización.</div>
+              <div style={{background:"#7f1d1d22",border:`1px solid ${C.danger}`,borderRadius:8,padding:"14px 20px",marginBottom:20,fontSize:13}}>
+                ⏳ Esperando autorización de <b style={{color:C.accent}}>jorgesebastianiturre@gmail.com</b>
+              </div>
+              <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+                <button style={{...css.btn(),padding:"10px 24px"}} onClick={checkAuth}>🔄 Verificar autorización</button>
+                <button style={{...css.btn("neutral"),padding:"10px 24px"}} onClick={()=>{setAlertaEsperando(false);setAlertaToken(null);}}>✕ Cancelar</button>
+              </div>
+              <div style={{fontSize:11,color:C.muted,marginTop:16}}>El sistema verifica automáticamente cada vez que apretás el botón.</div>
+            </div>;
+          })()}
+
+          {!turnoActivo&&!alertaEsperando
             ? <div style={{...css.card,border:`2px solid ${C.accent}`,textAlign:"center",padding:"32px 24px"}}>
                 <div style={{fontSize:22,marginBottom:8}}>🕐 Iniciar Turno</div>
                 <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Completá los datos del turno. Podés cambiar la fecha si estás cargando facturas de otro día.</div>
@@ -1451,7 +1497,33 @@ export default function FoodiesApp() {
                   const fecha = document.getElementById("ta-fecha")?.value || hoy();
                   if(!vend){ alert("Seleccioná un vendedor"); return; }
                   const comandaIni = document.getElementById("ta-comanda")?.value;
-                  const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), comandaInicial:parseInt(comandaIni)||null};
+                  const comandaNum = parseInt(comandaIni)||null;
+                  
+                  // Verificar correlatividad
+                  const ultimaFact = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
+                  const ultimaNum = ultimaFact?parseInt(ultimaFact.comanda):null;
+                  const diferencia = comandaNum&&ultimaNum ? Math.abs(comandaNum - ultimaNum - 1) : (comandaNum&&!ultimaNum?0:null);
+                  
+                  // Si hay diferencia → bloquear y pedir autorización
+                  if(comandaNum!==null && diferencia!==null && diferencia>0) {
+                    const alertId = gid();
+                    setAlertaId(alertId);
+                    setAlertaEsperando(true);
+                    // Enviar alerta al admin
+                    try {
+                      const resp = await fetch(`https://aauifejcgrmkobemhkbx.supabase.co/functions/v1/autorizar-comanda`, {
+                        method: 'POST',
+                        headers: {'Content-Type':'application/json', 'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdWlmZWpjZ3Jta29iZW1oa2J4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDAyMzAsImV4cCI6MjA5MTE3NjIzMH0.Ehhj2YK11CkzefbuZQt2vGfcExj8Q5NUdBBmikO9Llg'},
+                        body: JSON.stringify({id:alertId, fecha, turno:turn, vendedor:vend, comanda_ultima:ultimaNum, comanda_ingresada:comandaNum, diferencia})
+                      });
+                      const data = await resp.json();
+                      setAlertaToken(data.token);
+                    } catch(e) { console.error("Error alerta:",e); }
+                    return; // BLOQUEAR el inicio del turno
+                  }
+                  
+                  // Sin diferencia → iniciar turno normalmente
+                  const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), comandaInicial:comandaNum};
                   setTurnoActivoPersistente(ta);
                   setNf(emptyNf(ta));
                   setBVendedor(vend);
