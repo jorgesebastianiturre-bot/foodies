@@ -281,6 +281,13 @@ export default function FoodiesApp() {
   const [alertaId, setAlertaId] = useState(null);
   const [modalAutorizacion, setModalAutorizacion] = useState(null);
   const [talonarios, setTalonarios] = useState([]);
+  const [insumos, setInsumos] = useState([]);
+  const [insumosMovs, setInsumosMovs] = useState([]);
+  const [provVisitas, setProvVisitas] = useState([]);
+  const [insumosTab, setInsumosTab] = useState("panel");
+  const [insumoBusq, setInsumoBusq] = useState("");
+  const [modalInsumo, setModalInsumo] = useState(null); // null | 'nuevo' | insumo
+  const [insumoForm, setInsumoForm] = useState({nombre:"",categoria:"Carnes",unidad:"kg",proveedorNombre:"",stockMinimo:0});
   const [modalTalonario, setModalTalonario] = useState(false);
   const [talDesde, setTalDesde] = useState("");
   const [talHasta, setTalHasta] = useState("");
@@ -475,6 +482,28 @@ export default function FoodiesApp() {
         estado:t.estado, obs:t.obs
       })));
     } catch(e) { console.error("talonarios:",e); }
+
+    try {
+      const [insDb, movDb, visDb] = await Promise.all([
+        supabase.from("insumos").select("*").eq("activo",true).order("categoria").order("nombre"),
+        supabase.from("insumos_movimientos").select("*").order("created_at",{ascending:false}).limit(300),
+        supabase.from("proveedores_visitas").select("*").eq("activo",true).order("proveedor_nombre")
+      ]);
+      if(insDb.data) setInsumos(insDb.data.map(i=>({
+        id:i.id, nombre:i.nombre, categoria:i.categoria, unidad:i.unidad,
+        proveedorNombre:i.proveedor_nombre, stockActual:parseFloat(i.stock_actual)||0,
+        stockMinimo:parseFloat(i.stock_minimo)||0, activo:i.activo
+      })));
+      if(movDb.data) setInsumosMovs(movDb.data.map(m=>({
+        id:m.id, insumoId:m.insumo_id, tipo:m.tipo,
+        cantidad:parseFloat(m.cantidad)||0, stockResultante:parseFloat(m.stock_resultante)||0,
+        motivo:m.motivo, compraId:m.compra_id, fecha:m.fecha, hora:m.hora, usuario:m.usuario
+      })));
+      if(visDb.data) setProvVisitas(visDb.data.map(v=>({
+        id:v.id, proveedorNombre:v.proveedor_nombre,
+        diasVisita:v.dias_visita||[], horaVisita:v.hora_visita||"", obs:v.obs||""
+      })));
+    } catch(e) { console.error("insumos:",e); }
 
     // Cargar gastos y retiros
     try {
@@ -1287,7 +1316,7 @@ export default function FoodiesApp() {
   ] : [
     ...(esVentas?[{k:"nueva",l:"📄 Nueva Factura"},{k:"historial",l:"🗂 Historial"},{k:"transferencias",l:"🔄 Transferencias",badge:transferPendientes.length},{k:"caja",l:"💰 Cierre de Caja"},{k:"cuentacorriente",l:"🏦 Cta. Corriente",badge:saldosCC.filter(x=>x.saldo>0).length}]:[]),
     ...(esAdmin?[{k:"informes",l:"📊 Informes"},{k:"cadetes",l:"🛵 Cadetes"},{k:"ventasxdia",l:"📅 Ventas x Día"},{k:"reportemensual",l:"📈 Reporte Mensual"}]:[]),
-    ...(esVentas?[{k:"stock",l:"📦 Stock"}]:[]),
+    ...(esVentas?[{k:"stock",l:"📦 Stock"},{k:"insumos",l:"🧺 Insumos"}]:[]),
     ...(esVentas?[{k:"productos",l:"🛍 Productos"},{k:"clientes",l:"👥 Clientes"}]:[]),
     ...(esCompras||esAdmin?[{k:"compras",l:"📦 Compras",badge:comprasVencidas.length}]:[]),
     {k:"personal",l:"👤 Personal"},
@@ -1442,9 +1471,27 @@ export default function FoodiesApp() {
           const hoy5h = new Date(); hoy5h.setDate(hoy5h.getDate()+5);
           const hoy5strH = hoy5h.toISOString().slice(0,10);
           const chAlerta = cheques.filter(ch=>ch.estado==="pendiente"&&ch.fechaPago<=hoy5strH);
-          return chAlerta.length>0&&esCompras&&<div style={{background:"#7c2d12",border:`1px solid ${C.danger}`,borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#fb923c",marginBottom:8}} onClick={()=>{setTab("compras");setComprasTab("cheques");}}>
+          // Alarma visita proveedor HOY
+          const hoyDia = new Date().getDay();
+          const provHoy = provVisitas.filter(p=>p.diasVisita&&p.diasVisita.includes(hoyDia));
+
+          return <>
+            {provHoy.length>0&&<div style={{background:"#0f2a0f",border:`2px solid ${C.success}`,borderRadius:10,padding:"12px 16px",marginBottom:10,cursor:"pointer"}} onClick={()=>setTab("insumos")}>
+              <div style={{fontWeight:800,color:C.success,fontSize:13,marginBottom:6}}>📦 HOY TIENEN VISITA — {provHoy.map(p=>p.proveedorNombre).join(" · ")}</div>
+              {provHoy.map(p=>{
+                const insumosDelProv = insumos.filter(i=>i.proveedorNombre===p.proveedorNombre);
+                const bajos = insumosDelProv.filter(i=>i.stockActual<=i.stockMinimo&&i.stockMinimo>0);
+                return <div key={p.id} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700,fontSize:12}}>{p.proveedorNombre}{p.horaVisita?` — ${p.horaVisita}`:""}</span>
+                  {bajos.map(i=><span key={i.id} style={{background:"#7f1d1d",color:C.danger,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700}}>⚠️ {i.nombre}: {i.stockActual} {i.unidad}</span>)}
+                  {bajos.length===0&&insumosDelProv.length>0&&<span style={{color:C.success,fontSize:11}}>✅ Stock OK</span>}
+                </div>;
+              })}
+            </div>}
+            {chAlerta.length>0&&esCompras&&<div style={{background:"#7c2d12",border:`1px solid ${C.danger}`,borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#fb923c",marginBottom:8}} onClick={()=>{setTab("compras");setComprasTab("cheques");}}>
             🏦 {chAlerta.length} cheque{chAlerta.length>1?"s":""} por vencer
-          </div>;
+          </div>}
+          </>;
         })()}
         {esVentas&&<div style={css.grid(120)}>
           <div style={css.stat}><div style={css.statV()}>{facturas.length}</div><div style={css.statL}>Facturas</div></div>
@@ -3647,6 +3694,244 @@ export default function FoodiesApp() {
                   </td>
                 </tr>)}</tbody>
               </table></div>
+            </div>}
+          </>;
+        })()}
+
+        {/* ══ MÓDULO INSUMOS ══ */}
+        {tab==="insumos"&&esVentas&&(()=>{
+          const DIAS = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+          const categorias = [...new Set(insumos.map(i=>i.categoria))].sort();
+          const insFiltrados = insumos.filter(i=>!insumoBusq||i.nombre.toLowerCase().includes(insumoBusq.toLowerCase())||i.proveedorNombre.toLowerCase().includes(insumoBusq.toLowerCase()));
+
+          const registrarMov = async (insumoId, tipo, cantidad, motivo) => {
+            const ins = insumos.find(x=>x.id===insumoId); if(!ins) return;
+            const delta = tipo==="salida"?-cantidad:cantidad;
+            const nuevoStock = Math.max(0, ins.stockActual + delta);
+            const movId = gid();
+            const hora = new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+            await supabase.from("insumos").update({stock_actual:nuevoStock,updated_at:new Date().toISOString()}).eq("id",insumoId);
+            await supabase.from("insumos_movimientos").insert({id:movId,insumo_id:insumoId,tipo,cantidad,stock_resultante:nuevoStock,motivo,fecha:hoy(),hora,usuario:usuario?.nombre||""});
+            setInsumos(prev=>prev.map(x=>x.id===insumoId?{...x,stockActual:nuevoStock}:x));
+            setInsumosMovs(prev=>[{id:movId,insumoId,tipo,cantidad,stockResultante:nuevoStock,motivo,fecha:hoy(),hora},...prev]);
+          };
+
+          // Calcular sugerido de pedido basado en historial de consumo
+          const sugeridoPedido = (insumoId) => {
+            const movs = insumosMovs.filter(m=>m.insumoId===insumoId&&m.tipo==="salida");
+            if(movs.length<2) return null;
+            const fechas = [...new Set(movs.map(m=>m.fecha))].sort();
+            if(fechas.length<2) return null;
+            const totalConsumo = movs.reduce((s,m)=>s+m.cantidad,0);
+            const dias = Math.max(1, (new Date(fechas[fechas.length-1])-new Date(fechas[0]))/(1000*60*60*24));
+            const consumoDiario = totalConsumo/dias;
+            const consumoSemanal = consumoDiario*7;
+            return Math.ceil(consumoSemanal*1.2); // 20% de margen
+          };
+
+          return <>
+            {/* Tabs del módulo */}
+            <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+              {[["panel","📊 Panel"],["control","📝 Control de Stock"],["proveedores","🏪 Proveedores"],["historial","📋 Historial"]].map(([k,l])=>(
+                <button key={k} style={{...css.btn(insumosTab===k?"primary":"neutral"),fontSize:12}} onClick={()=>setInsumosTab(k)}>{l}</button>
+              ))}
+              {esAdmin&&<button style={{...css.btn("neutral"),fontSize:12}} onClick={()=>setModalInsumo("nuevo")}>+ Nuevo insumo</button>}
+            </div>
+
+            {/* ── PANEL ── */}
+            {insumosTab==="panel"&&<>
+              <div style={css.card}>
+                <div style={css.row}>
+                  <input style={{...css.input,flex:2}} placeholder="Buscar insumo o proveedor..." value={insumoBusq} onChange={e=>setInsumoBusq(e.target.value)}/>
+                  <button style={css.btn("neutral")} onClick={()=>setInsumoBusq("")}>✕</button>
+                </div>
+                <div style={{fontSize:12,color:C.muted,marginTop:4}}>{insumos.length} insumos · {insumos.filter(i=>i.stockActual<=i.stockMinimo&&i.stockMinimo>0).length} bajo mínimo</div>
+              </div>
+              {categorias.map(cat=>{
+                const items = insFiltrados.filter(i=>i.categoria===cat);
+                if(items.length===0) return null;
+                return <div key={cat} style={css.card}>
+                  <div style={css.cardTitle}>{cat}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))",gap:10}}>
+                    {items.map(ins=>{
+                      const bajo = ins.stockActual<=ins.stockMinimo&&ins.stockMinimo>0;
+                      const color = ins.stockActual<0?C.danger:bajo?C.warn:C.success;
+                      const sug = sugeridoPedido(ins.id);
+                      return <div key={ins.id} style={{background:"#1a1a1a",border:`2px solid ${color}`,borderRadius:10,padding:"12px"}}>
+                        <div style={{fontWeight:700,fontSize:13,marginBottom:2}}>{ins.nombre}</div>
+                        <div style={{fontSize:11,color:C.muted,marginBottom:6}}>{ins.proveedorNombre||"Sin proveedor"}</div>
+                        <div style={{fontSize:24,fontWeight:900,color}}>{ins.stockActual}</div>
+                        <div style={{fontSize:11,color:C.muted,marginBottom:6}}>{ins.unidad} · mín. {ins.stockMinimo}</div>
+                        {sug&&<div style={{fontSize:10,color:"#f59e0b",marginBottom:6}}>📦 Pedido sugerido: {sug} {ins.unidad}/sem</div>}
+                        {esAdmin&&<div style={{display:"flex",gap:4,marginTop:6}}>
+                          <button style={{...css.btn("neutral"),padding:"3px 8px",fontSize:10,flex:1}} onClick={()=>{const v=parseFloat(window.prompt(`Sacar (${ins.unidad}) de ${ins.nombre}:`));if(v>0)registrarMov(ins.id,"salida",v,"control manual");}}>- Sacar</button>
+                          <button style={{...css.btn(),padding:"3px 8px",fontSize:10,flex:1}} onClick={()=>{const v=parseFloat(window.prompt(`Agregar (${ins.unidad}) de ${ins.nombre}:`));if(v>0)registrarMov(ins.id,"entrada",v,"entrada manual");}}>+ Agregar</button>
+                        </div>}
+                      </div>;
+                    })}
+                  </div>
+                </div>;
+              })}
+            </>}
+
+            {/* ── CONTROL DE STOCK ── */}
+            {insumosTab==="control"&&<div style={css.card}>
+              <div style={css.cardTitle}>📝 Control de Stock — {hoy()}</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Ingresá el stock físico actual de cada insumo. El sistema calcula el consumo automáticamente.</div>
+              <div style={{overflowX:"auto"}}><table style={css.table}>
+                <thead><tr>
+                  <th style={css.th}>Insumo</th><th style={css.th}>Proveedor</th>
+                  <th style={{...css.th,textAlign:"right"}}>Stock sistema</th>
+                  <th style={{...css.th,textAlign:"right"}}>Stock físico real</th>
+                  <th style={{...css.th,textAlign:"right"}}>Mínimo</th>
+                  <th style={{...css.th,textAlign:"right"}}>Sug. pedido/sem</th>
+                  <th style={css.th}></th>
+                </tr></thead>
+                <tbody>{insumos.map(ins=>{
+                  const sug = sugeridoPedido(ins.id);
+                  const bajo = ins.stockActual<=ins.stockMinimo&&ins.stockMinimo>0;
+                  return <tr key={ins.id} style={{background:bajo?"#7f1d1d11":"transparent"}}>
+                    <td style={{...css.td,fontWeight:700}}>{ins.nombre}</td>
+                    <td style={{...css.td,fontSize:11,color:C.muted}}>{ins.proveedorNombre||"—"}</td>
+                    <td style={{...css.td,textAlign:"right",color:bajo?C.danger:C.success,fontWeight:700}}>{ins.stockActual} {ins.unidad}</td>
+                    <td style={{...css.td,textAlign:"right"}}>
+                      <input style={{...css.input,maxWidth:80,textAlign:"right"}} type="number" step="0.1" min="0"
+                        placeholder={String(ins.stockActual)}
+                        onBlur={async e=>{
+                          const v=parseFloat(e.target.value);
+                          if(!isNaN(v)&&v!==ins.stockActual){
+                            const diff=v-ins.stockActual;
+                            await registrarMov(ins.id,diff>0?"entrada":"control",Math.abs(diff),"control "+hoy());
+                            e.target.value="";
+                          }
+                        }}
+                      />
+                    </td>
+                    <td style={{...css.td,textAlign:"right",color:bajo?C.danger:C.muted}}>{ins.stockMinimo} {ins.unidad}</td>
+                    <td style={{...css.td,textAlign:"right",color:"#f59e0b",fontWeight:700}}>{sug?`${sug} ${ins.unidad}`:"—"}</td>
+                    <td style={css.td}>
+                      {bajo&&<span style={{...css.badge("pendiente"),fontSize:10}}>⚠️ Bajo</span>}
+                    </td>
+                  </tr>;
+                })}</tbody>
+              </table></div>
+            </div>}
+
+            {/* ── PROVEEDORES ── */}
+            {insumosTab==="proveedores"&&<div style={css.card}>
+              <div style={css.cardTitle}>🏪 Agenda de Proveedores</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Configurá qué días visita cada proveedor para recibir la alarma automática.</div>
+              <div style={{overflowX:"auto"}}><table style={css.table}>
+                <thead><tr>
+                  <th style={css.th}>Proveedor</th>
+                  {["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"].map((d,i)=><th key={i} style={{...css.th,textAlign:"center"}}>{d}</th>)}
+                  <th style={css.th}>Hora</th>
+                  <th style={css.th}>Insumos</th>
+                </tr></thead>
+                <tbody>{provVisitas.map(p=>{
+                  const insDelProv = insumos.filter(i=>i.proveedorNombre===p.proveedorNombre);
+                  return <tr key={p.id}>
+                    <td style={{...css.td,fontWeight:700}}>{p.proveedorNombre}</td>
+                    {[0,1,2,3,4,5,6].map(d=><td key={d} style={{...css.td,textAlign:"center"}}>
+                      {esAdmin
+                        ?<input type="checkbox" checked={p.diasVisita?.includes(d)||false}
+                          onChange={async e=>{
+                            const nuevos = e.target.checked
+                              ?[...(p.diasVisita||[]),d].sort()
+                              :(p.diasVisita||[]).filter(x=>x!==d);
+                            await supabase.from("proveedores_visitas").update({dias_visita:nuevos}).eq("id",p.id);
+                            setProvVisitas(prev=>prev.map(x=>x.id===p.id?{...x,diasVisita:nuevos}:x));
+                          }}/>
+                        :(p.diasVisita?.includes(d)?<span style={{color:C.success}}>✅</span>:"")
+                      }
+                    </td>)}
+                    <td style={css.td}>
+                      {esAdmin
+                        ?<input style={{...css.input,maxWidth:80,fontSize:11}} placeholder="10:00" defaultValue={p.horaVisita}
+                          onBlur={async e=>{
+                            await supabase.from("proveedores_visitas").update({hora_visita:e.target.value}).eq("id",p.id);
+                            setProvVisitas(prev=>prev.map(x=>x.id===p.id?{...x,horaVisita:e.target.value}:x));
+                          }}/>
+                        :p.horaVisita||"—"
+                      }
+                    </td>
+                    <td style={{...css.td,fontSize:11,color:C.muted}}>{insDelProv.length>0?insDelProv.map(i=>i.nombre).join(", "):"Sin insumos asignados"}</td>
+                  </tr>;
+                })}</tbody>
+              </table></div>
+            </div>}
+
+            {/* ── HISTORIAL ── */}
+            {insumosTab==="historial"&&<div style={css.card}>
+              <div style={css.cardTitle}>📋 Historial de Movimientos</div>
+              {insumosMovs.length===0
+                ?<p style={{color:C.muted,textAlign:"center",padding:24}}>Sin movimientos registrados.</p>
+                :<div style={{overflowX:"auto"}}><table style={css.table}>
+                  <thead><tr>
+                    <th style={css.th}>Fecha</th><th style={css.th}>Insumo</th>
+                    <th style={css.th}>Tipo</th><th style={{...css.th,textAlign:"right"}}>Cant.</th>
+                    <th style={{...css.th,textAlign:"right"}}>Stock result.</th><th style={css.th}>Motivo</th>
+                  </tr></thead>
+                  <tbody>{insumosMovs.slice(0,150).map(m=>{
+                    const ins=insumos.find(x=>x.id===m.insumoId);
+                    return <tr key={m.id}>
+                      <td style={css.td}>{fmtFecha(m.fecha)}</td>
+                      <td style={{...css.td,fontWeight:600}}>{ins?.nombre||"—"}</td>
+                      <td style={css.td}><span style={{...css.tag(m.tipo==="entrada"?C.success:m.tipo==="salida"?C.danger:C.info)}}>{m.tipo==="entrada"?"📥 Entrada":m.tipo==="salida"?"📤 Salida":"📝 Control"}</span></td>
+                      <td style={{...css.td,textAlign:"right",fontWeight:700,color:m.tipo==="entrada"?C.success:C.danger}}>{m.tipo==="entrada"?"+":"-"}{m.cantidad} {ins?.unidad||""}</td>
+                      <td style={{...css.td,textAlign:"right"}}>{m.stockResultante} {ins?.unidad||""}</td>
+                      <td style={{...css.td,fontSize:11,color:C.muted}}>{m.motivo||"—"}</td>
+                    </tr>;
+                  })}</tbody>
+                </table></div>
+              }
+            </div>}
+
+            {/* Modal nuevo insumo */}
+            {modalInsumo==="nuevo"&&<div style={css.modal} onClick={()=>setModalInsumo(null)}>
+              <div style={{...css.modalBox,maxWidth:480}} onClick={e=>e.stopPropagation()}>
+                <div style={{fontWeight:800,fontSize:16,color:C.accent,marginBottom:16}}>🧺 Nuevo Insumo</div>
+                <div style={css.row}>
+                  <div style={{flex:2}}><div style={css.lbl}>Nombre</div><input style={css.input} value={insumoForm.nombre} onChange={e=>setInsumoForm(p=>({...p,nombre:e.target.value}))}/></div>
+                  <div style={css.col}>
+                    <div style={css.lbl}>Unidad</div>
+                    <select style={css.sel} value={insumoForm.unidad} onChange={e=>setInsumoForm(p=>({...p,unidad:e.target.value}))}>
+                      {["kg","litro","unidad","caja","bolsa","atado","docena","pack"].map(u=><option key={u}>{u}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={css.row}>
+                  <div style={css.col}>
+                    <div style={css.lbl}>Categoría</div>
+                    <select style={css.sel} value={insumoForm.categoria} onChange={e=>setInsumoForm(p=>({...p,categoria:e.target.value}))}>
+                      {["Carnes","Verduras","Lácteos","Panificados","Bebidas","Descartables","Limpieza","Congelados","Secos","Otros"].map(c=><option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div style={{flex:2}}>
+                    <div style={css.lbl}>Proveedor</div>
+                    <select style={css.sel} value={insumoForm.proveedorNombre} onChange={e=>setInsumoForm(p=>({...p,proveedorNombre:e.target.value}))}>
+                      <option value="">— Sin asignar —</option>
+                      {provVisitas.map(p=><option key={p.id} value={p.proveedorNombre}>{p.proveedorNombre}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={css.row}>
+                  <div style={css.col}><div style={css.lbl}>Stock mínimo</div><input style={css.input} type="number" value={insumoForm.stockMinimo} onChange={e=>setInsumoForm(p=>({...p,stockMinimo:parseFloat(e.target.value)||0}))}/></div>
+                  <div style={css.col}><div style={css.lbl}>Stock inicial</div><input style={css.input} type="number" placeholder="0" id="ins-stock-inicial"/></div>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16}}>
+                  <button style={css.btn("neutral")} onClick={()=>setModalInsumo(null)}>Cancelar</button>
+                  <button style={{...css.btn(),opacity:!insumoForm.nombre?0.4:1}} disabled={!insumoForm.nombre} onClick={async()=>{
+                    const id=gid();
+                    const stockIni=parseFloat(document.getElementById("ins-stock-inicial")?.value)||0;
+                    await supabase.from("insumos").insert({id,nombre:insumoForm.nombre,categoria:insumoForm.categoria,unidad:insumoForm.unidad,proveedor_nombre:insumoForm.proveedorNombre,stock_actual:stockIni,stock_minimo:insumoForm.stockMinimo,activo:true});
+                    setInsumos(prev=>[...prev,{id,nombre:insumoForm.nombre,categoria:insumoForm.categoria,unidad:insumoForm.unidad,proveedorNombre:insumoForm.proveedorNombre,stockActual:stockIni,stockMinimo:insumoForm.stockMinimo,activo:true}].sort((a,b)=>a.categoria.localeCompare(b.categoria)||a.nombre.localeCompare(b.nombre)));
+                    setInsumoForm({nombre:"",categoria:"Carnes",unidad:"kg",proveedorNombre:"",stockMinimo:0});
+                    setModalInsumo(null);
+                    alert("✅ Insumo creado");
+                  }}>💾 Guardar</button>
+                </div>
+              </div>
             </div>}
           </>;
         })()}
