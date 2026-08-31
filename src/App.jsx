@@ -728,14 +728,23 @@ export default function FoodiesApp() {
     // Usar comanda inicial del turno si está registrada
     const cmdInicial = cierre.comandaInicial || (nums.length>0?nums[0]:null);
     const cmdFinal = nums.length>0?nums[nums.length-1]:null;
+
+    // Verificar salto entre turno anterior y este turno
+    const cierresOrdenados = cierres.filter(x=>x.id!==cierre.id).sort((a,b)=>
+      b.fecha.localeCompare(a.fecha)||(b.turno==="Noche"?1:-1));
+    const cierreAnterior = cierresOrdenados[0]||null;
+    const ultimaCmdAnterior = cierreAnterior ? facturas
+      .filter(f=>f.fecha===cierreAnterior.fecha&&f.turno===cierreAnterior.turno&&f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda)))
+      .reduce((max,f)=>Math.max(max,parseInt(f.comanda)),0)||null : null;
+    const saltoEntreTurnos = (cmdInicial&&ultimaCmdAnterior) ? cmdInicial - ultimaCmdAnterior - 1 : null;
+
     const faltantes=[],incompletos=[],saltosGraves=[];
     if(cmdInicial&&cmdFinal){
       for(let n=cmdInicial;n<=cmdFinal;n++){
         const cant=conteo[n]||0;
-        if(cant===0) faltantes.push(n); // No aparece en ningún turno/mañana/noche
-        else if(cant===1) incompletos.push(n); // Solo aparece una vez (debería ser 2: mañana y noche)
+        if(cant===0) faltantes.push(n);
+        else if(cant===1) incompletos.push(n);
       }
-      // Detectar saltos grandes (más de 3 consecutivas)
       let inicio=null;
       for(let n=cmdInicial;n<=cmdFinal;n++){
         if((conteo[n]||0)===0){if(!inicio)inicio=n;}
@@ -743,7 +752,7 @@ export default function FoodiesApp() {
       }
       if(inicio&&cmdFinal-inicio>=2)saltosGraves.push({desde:inicio,hasta:cmdFinal,cant:cmdFinal-inicio+1});
     }
-    const hayProblemas = faltantes.length>0||incompletos.length>0;
+    const hayProblemas = faltantes.length>0||incompletos.length>0||(saltoEntreTurnos!==null&&saltoEntreTurnos>0);
     const difTransfer = factDia.filter(f=>{
       const tr=(f.medioPago1==="Transferencia"?(parseFloat(f.importe1)||0):0)+(f.medioPago2==="Transferencia"?(parseFloat(f.importe2)||0):0);
       return tr>0&&Math.abs(tr-f.total)>1;
@@ -875,10 +884,12 @@ export default function FoodiesApp() {
       const totalRango = cmdFinal - cmdInicial + 1;
       html += "<div style='background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:10px'>";
       html += "<table style='border:none'>";
-      html += "<tr><td style='border:none;color:#555'>Comanda inicial del turno</td><td style='border:none;font-weight:700'>#"+cmdInicial+"</td></tr>";
-      html += "<tr><td style='border:none;color:#555'>Última comanda del turno</td><td style='border:none;font-weight:700'>#"+cmdFinal+"</td></tr>";
+      if(ultimaCmdAnterior) html += "<tr><td style='border:none;color:#555'>Última comanda turno anterior</td><td style='border:none;font-weight:700'>#"+ultimaCmdAnterior+" ("+cierreAnterior.fecha+" "+cierreAnterior.turno+")</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Comanda inicial de este turno</td><td style='border:none;font-weight:700'>#"+cmdInicial+"</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Última comanda de este turno</td><td style='border:none;font-weight:700'>#"+cmdFinal+"</td></tr>";
       html += "<tr><td style='border:none;color:#555'>Total comandas en rango</td><td style='border:none;font-weight:700'>"+totalRango+"</td></tr>";
       html += "<tr><td style='border:none;color:#555'>Comandas registradas</td><td style='border:none;font-weight:700'>"+nums.length+"</td></tr>";
+      if(saltoEntreTurnos!==null) html += "<tr style='background:"+(saltoEntreTurnos===0?"#f0fdf4":"#fef2f2")+"'><td style='border:none;font-weight:700'>Salto entre turnos</td><td style='border:none;font-weight:700;color:"+(saltoEntreTurnos===0?"#16a34a":"#dc2626")+"'>"+( saltoEntreTurnos===0?"✅ Ninguno":"⚠️ "+saltoEntreTurnos+" comanda(s) sin registrar entre turnos")+"</td></tr>";
       html += "</table></div>";
 
       if(!hayProblemas) {
@@ -890,6 +901,14 @@ export default function FoodiesApp() {
       } else {
         html += "<div style='background:#fef2f2;border:2px solid #ef4444;border-radius:8px;padding:14px;margin-bottom:12px'>";
         html += "<div style='font-size:18px;font-weight:900;color:#991b1b;margin-bottom:8px'>🚨 ALERTA: SE DETECTARON IRREGULARIDADES</div>";
+
+        if(saltoEntreTurnos>0) {
+          html += "<div style='background:#7f1d1d;color:#fecaca;border-radius:6px;padding:10px;margin-bottom:10px'>";
+          html += "<b>🔴 SALTO ENTRE TURNOS:</b><br>";
+          html += "La última comanda del turno anterior fue #"+ultimaCmdAnterior+" y este turno arrancó en #"+cmdInicial+".<br>";
+          html += "Hay <b>"+saltoEntreTurnos+" comanda(s)</b> que no están registradas en ningún turno.<br>";
+          html += "</div>";
+        }
 
         if(saltosGraves.length>0) {
           html += "<div style='background:#7f1d1d;color:#fecaca;border-radius:6px;padding:10px;margin-bottom:10px'>";
