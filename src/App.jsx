@@ -279,7 +279,12 @@ export default function FoodiesApp() {
   const [alertaToken, setAlertaToken] = useState(null); // token de autorización pendiente
   const [alertaEsperando, setAlertaEsperando] = useState(false); // esperando que el admin autorice
   const [alertaId, setAlertaId] = useState(null);
-  const [modalAutorizacion, setModalAutorizacion] = useState(null); // {tipo, datos, onAutorizado}
+  const [modalAutorizacion, setModalAutorizacion] = useState(null);
+  const [talonarios, setTalonarios] = useState([]);
+  const [modalTalonario, setModalTalonario] = useState(false);
+  const [talDesde, setTalDesde] = useState("");
+  const [talHasta, setTalHasta] = useState("");
+  const [talObs, setTalObs] = useState(""); // {tipo, datos, onAutorizado}
   const [pinIngresado, setPinIngresado] = useState("");
   const [pinError, setPinError] = useState("");
   const [pinVerificando, setPinVerificando] = useState(false);
@@ -460,6 +465,16 @@ export default function FoodiesApp() {
         fecha:m.fecha, hora:m.hora, usuario:m.usuario
       })));
     } catch(e) { console.error("stock:",e); }
+
+    try {
+      const { data:talDb } = await supabase.from("talonarios").select("*").order("created_at",{ascending:false});
+      if(talDb) setTalonarios(talDb.map(t=>({
+        id:t.id, desde:t.numero_desde, hasta:t.numero_hasta,
+        fechaInicio:t.fecha_inicio, fechaCierre:t.fecha_cierre,
+        turnoInicio:t.turno_inicio, vendedor:t.vendedor,
+        estado:t.estado, obs:t.obs
+      })));
+    } catch(e) { console.error("talonarios:",e); }
 
     // Cargar gastos y retiros
     try {
@@ -1535,6 +1550,18 @@ export default function FoodiesApp() {
                   <div style={{flex:1}}>
                     <div style={{fontWeight:800,color:C.success,fontSize:14}}>Turno Activo — {turnoActivo.turno}</div>
                     <div style={{fontSize:12,color:C.muted}}>Vendedor: <b style={{color:C.text}}>{turnoActivo.vendedor}</b> · Inicio: {turnoActivo.hora}{turnoActivo.comandaInicial?<span style={{color:"#f59e0b"}}> · Comanda inicial: <b>#{turnoActivo.comandaInicial}</b></span>:null}</div>
+                    {(()=>{
+                      // Alerta de talonario por agotarse
+                      const talActivo = talonarios.find(t=>t.estado==="activo");
+                      const ultimaCmdActual = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))).reduce((max,f)=>Math.max(max,parseInt(f.comanda)),0);
+                      const restanTal = talActivo ? talActivo.hasta - ultimaCmdActual : null;
+                      if(talActivo && restanTal!==null && restanTal<=5 && restanTal>=0) {
+                        return <div style={{background:"#7f1d1d",borderRadius:6,padding:"8px 12px",marginTop:6,fontSize:12}}>
+                          🚨 <b>Talonario por agotarse</b> — quedan {restanTal} comanda(s) (hasta #{talActivo.hasta}). Preparar talonario nuevo.
+                        </div>;
+                      }
+                      return null;
+                    })()}
                     {(()=>{
                       if(!turnoActivo.comandaInicial) return null;
                       const ultimaAnterior = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))&&(f.fecha<turnoActivo.fecha||(f.fecha===turnoActivo.fecha&&f.turno!==turnoActivo.turno))).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
@@ -2883,8 +2910,19 @@ export default function FoodiesApp() {
 
             <div style={{background:"#111",borderRadius:8,padding:"14px 16px",marginBottom:16}}>
               <div style={{fontSize:12,color:C.muted,marginBottom:4}}>¿Es un cambio de talonario o situación conocida?</div>
-              <div style={{fontSize:13,color:C.text,marginBottom:12}}>Ingresá el código de autorización del administrador para continuar.</div>
-              <div style={css.lbl}>Código de autorización</div>
+              <div style={{fontSize:13,color:C.text,marginBottom:12}}>Si es un talonario nuevo, ingresá el primer y último número. Si es otra situación, dejá en blanco.</div>
+              <div style={css.row}>
+                <div style={css.col}>
+                  <div style={css.lbl}>N° desde (primer comanda)</div>
+                  <input style={css.input} type="number" placeholder="Ej: 3081001" value={talDesde} onChange={e=>setTalDesde(e.target.value)}/>
+                </div>
+                <div style={css.col}>
+                  <div style={css.lbl}>N° hasta (último comanda)</div>
+                  <input style={css.input} type="number" placeholder="Ej: 3081100" value={talHasta} onChange={e=>setTalHasta(e.target.value)}/>
+                </div>
+              </div>
+              <div style={{marginTop:10}}>
+                <div style={css.lbl}>Código de autorización del administrador</div>
               <input
                 style={{...css.input,textAlign:"center",fontSize:20,letterSpacing:8,fontWeight:700}}
                 type="password" maxLength={12} placeholder="••••••••"
@@ -2922,6 +2960,17 @@ export default function FoodiesApp() {
                   setPinVerificando(false);
                   if(ok){
                     const motivo = pinIngresado.length>4?"codigo_maestro":"pin_admin";
+                    if(talDesde&&talHasta) {
+                      const talId = gid();
+                      await supabase.from("talonarios").insert({
+                        id:talId, numero_desde:parseInt(talDesde), numero_hasta:parseInt(talHasta),
+                        fecha_inicio:modalAutorizacion.fecha, turno_inicio:modalAutorizacion.turn,
+                        vendedor:modalAutorizacion.vend, estado:"activo", obs:talObs||"Cambio de talonario autorizado",
+                        autorizado_por:motivo
+                      });
+                      setTalonarios(prev=>[{id:talId,desde:parseInt(talDesde),hasta:parseInt(talHasta),fechaInicio:modalAutorizacion.fecha,turnoInicio:modalAutorizacion.turn,vendedor:modalAutorizacion.vend,estado:"activo",obs:talObs},...prev]);
+                      setTalDesde(""); setTalHasta(""); setTalObs("");
+                    }
                     modalAutorizacion.onAutorizado(motivo);
                     setModalAutorizacion(null);
                     setPinIngresado("");
@@ -3596,6 +3645,71 @@ export default function FoodiesApp() {
         })()}
 
         {tab==="config"&&esAdmin&&<>
+          {/* Talonarios */}
+          <div style={css.card}>
+            <div style={{...css.cardTitle,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>📋 Talonarios de Comandas</span>
+              <button style={{...css.btn(),fontSize:12,padding:"6px 14px"}} onClick={()=>setModalTalonario(true)}>+ Registrar talonario</button>
+            </div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Registro de todos los talonarios usados. Al cambiar de talonario, el sistema verifica la correlatividad dentro de cada uno.</div>
+            {talonarios.length===0
+              ?<p style={{color:C.muted,textAlign:"center",padding:"20px"}}>Sin talonarios registrados. Registrá el primero al cambiar de talonario.</p>
+              :<div style={{overflowX:"auto"}}><table style={css.table}>
+                <thead><tr>
+                  <th style={css.th}>Desde</th><th style={css.th}>Hasta</th>
+                  <th style={{...css.th,textAlign:"right"}}>Comandas</th>
+                  <th style={css.th}>Fecha inicio</th><th style={css.th}>Fecha cierre</th>
+                  <th style={css.th}>Vendedor</th><th style={css.th}>Estado</th><th style={css.th}>Obs.</th>
+                </tr></thead>
+                <tbody>{talonarios.map(t=>{
+                  const total = t.hasta - t.desde + 1;
+                  const usadas = facturas.filter(f=>f.comanda&&parseInt(f.comanda)>=t.desde&&parseInt(f.comanda)<=t.hasta).length;
+                  const pct = Math.round(usadas/total*100);
+                  return <tr key={t.id}>
+                    <td style={{...css.td,fontWeight:700,color:C.accent}}>#{t.desde}</td>
+                    <td style={{...css.td,fontWeight:700}}>#{t.hasta}</td>
+                    <td style={{...css.td,textAlign:"right"}}>{usadas}/{total} ({pct}%)</td>
+                    <td style={css.td}>{fmtFecha(t.fechaInicio)}</td>
+                    <td style={css.td}>{t.fechaCierre?fmtFecha(t.fechaCierre):"—"}</td>
+                    <td style={css.td}>{t.vendedor||"—"}</td>
+                    <td style={css.td}>
+                      <span style={{...css.badge(t.estado==="activo"?"pagada":t.estado==="agotado"?"pendiente":"neutral")}}>
+                        {t.estado==="activo"?"✅ Activo":t.estado==="agotado"?"⚠️ Agotado":"🔒 Cerrado"}
+                      </span>
+                    </td>
+                    <td style={{...css.td,fontSize:11,color:C.muted}}>{t.obs||"—"}</td>
+                  </tr>;
+                })}</tbody>
+              </table></div>
+            }
+          </div>
+
+          {/* Modal registrar talonario manualmente */}
+          {modalTalonario&&<div style={css.modal} onClick={()=>setModalTalonario(false)}>
+            <div style={{...css.modalBox,maxWidth:420}} onClick={e=>e.stopPropagation()}>
+              <div style={{fontWeight:800,fontSize:16,color:C.accent,marginBottom:16}}>📋 Registrar Nuevo Talonario</div>
+              <div style={css.row}>
+                <div style={css.col}><div style={css.lbl}>N° desde</div><input style={css.input} type="number" value={talDesde} onChange={e=>setTalDesde(e.target.value)} placeholder="Ej: 3081001"/></div>
+                <div style={css.col}><div style={css.lbl}>N° hasta</div><input style={css.input} type="number" value={talHasta} onChange={e=>setTalHasta(e.target.value)} placeholder="Ej: 3081100"/></div>
+              </div>
+              <div style={css.col}><div style={css.lbl}>Observación (opcional)</div><input style={css.input} value={talObs} onChange={e=>setTalObs(e.target.value)} placeholder="Ej: talonario azul, comprado el 01/09"/></div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16}}>
+                <button style={css.btn("neutral")} onClick={()=>setModalTalonario(false)}>Cancelar</button>
+                <button style={{...css.btn(),opacity:(!talDesde||!talHasta)?0.4:1}} disabled={!talDesde||!talHasta} onClick={async()=>{
+                  const id = gid();
+                  await supabase.from("talonarios").insert({
+                    id, numero_desde:parseInt(talDesde), numero_hasta:parseInt(talHasta),
+                    fecha_inicio:hoy(), estado:"activo", obs:talObs||"", autorizado_por:"admin"
+                  });
+                  setTalonarios(prev=>[{id,desde:parseInt(talDesde),hasta:parseInt(talHasta),fechaInicio:hoy(),estado:"activo",obs:talObs},...prev]);
+                  setTalDesde(""); setTalHasta(""); setTalObs("");
+                  setModalTalonario(false);
+                  alert("✅ Talonario registrado");
+                }}>💾 Guardar</button>
+              </div>
+            </div>
+          </div>}
+
           {/* Datos del local */}
           <div style={css.card}>
             <div style={css.cardTitle}>🏪 Datos del Local</div>
