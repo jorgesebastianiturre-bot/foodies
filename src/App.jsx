@@ -1509,7 +1509,11 @@ export default function FoodiesApp() {
                   const comandaNum = parseInt(comandaIni)||null;
                   
                   // Verificar correlatividad
-                  const ultimaFact = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
+                  // Buscar última comanda: primero del talonario activo, si no de los últimos 60 días
+                  const talActivo = talonarios.find(t=>t.estado==="activo");
+                  const ultimaFact = talActivo
+                    ? facturas.filter(f=>f.comanda&&!isNaN(parseInt(f.comanda))&&parseInt(f.comanda)>=talActivo.desde&&parseInt(f.comanda)<=talActivo.hasta).sort((a,b)=>parseInt(b.comanda)-parseInt(a.comanda))[0]
+                    : facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))&&f.fecha>=new Date(Date.now()-60*24*60*60*1000).toISOString().split("T")[0]).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
                   const ultimaNum = ultimaFact?parseInt(ultimaFact.comanda):null;
                   const diferencia = comandaNum&&ultimaNum ? Math.abs(comandaNum - ultimaNum - 1) : (comandaNum&&!ultimaNum?0:null);
                   
@@ -1564,7 +1568,10 @@ export default function FoodiesApp() {
                     })()}
                     {(()=>{
                       if(!turnoActivo.comandaInicial) return null;
-                      const ultimaAnterior = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))&&(f.fecha<turnoActivo.fecha||(f.fecha===turnoActivo.fecha&&f.turno!==turnoActivo.turno))).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
+                      const talAct2 = talonarios.find(t=>t.estado==="activo");
+                      const ultimaAnterior = talAct2
+                        ? facturas.filter(f=>f.comanda&&!isNaN(parseInt(f.comanda))&&parseInt(f.comanda)>=talAct2.desde&&parseInt(f.comanda)<=talAct2.hasta&&parseInt(f.comanda)<(turnoActivo.comandaInicial||0)).sort((a,b)=>parseInt(b.comanda)-parseInt(a.comanda))[0]
+                        : facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))&&(f.fecha<turnoActivo.fecha||(f.fecha===turnoActivo.fecha&&f.turno!==turnoActivo.turno))&&f.fecha>=new Date(Date.now()-60*24*60*60*1000).toISOString().split("T")[0]).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
                       if(!ultimaAnterior) return null;
                       const ultimaNum = parseInt(ultimaAnterior.comanda);
                       const salto = turnoActivo.comandaInicial - ultimaNum - 1;
