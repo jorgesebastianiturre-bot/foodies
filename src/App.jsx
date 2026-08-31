@@ -1558,11 +1558,26 @@ export default function FoodiesApp() {
                   // Verificar correlatividad
                   // Buscar última comanda: primero del talonario activo, si no de los últimos 60 días
                   const talActivo = talonarios.find(t=>t.estado==="activo");
-                  const ultimaFact = talActivo
-                    ? facturas.filter(f=>f.comanda&&!isNaN(parseInt(f.comanda))&&parseInt(f.comanda)>=talActivo.desde&&parseInt(f.comanda)<=talActivo.hasta).sort((a,b)=>parseInt(b.comanda)-parseInt(a.comanda))[0]
-                    : facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))&&f.fecha>=new Date(Date.now()-60*24*60*60*1000).toISOString().split("T")[0]).sort((a,b)=>b.fecha.localeCompare(a.fecha)||parseInt(b.comanda)-parseInt(a.comanda))[0];
-                  const ultimaNum = ultimaFact?parseInt(ultimaFact.comanda):null;
-                  const diferencia = comandaNum&&ultimaNum ? Math.abs(comandaNum - ultimaNum - 1) : (comandaNum&&!ultimaNum?0:null);
+                  // Si hay talonario activo, la última comanda válida es la más alta dentro de ese rango
+                  // Si el talonario es nuevo y no tiene facturas, la "última" es desde-1
+                  let ultimaNum = null;
+                  if(talActivo) {
+                    const factsEnTalonario = facturas.filter(f=>f.comanda&&!isNaN(parseInt(f.comanda))&&parseInt(f.comanda)>=talActivo.desde&&parseInt(f.comanda)<=talActivo.hasta);
+                    if(factsEnTalonario.length>0) {
+                      ultimaNum = Math.max(...factsEnTalonario.map(f=>parseInt(f.comanda)));
+                    } else {
+                      // Talonario nuevo sin facturas: la última es desde-1 (el anterior terminó ahí)
+                      ultimaNum = talActivo.desde - 1;
+                    }
+                  } else {
+                    // Sin talonario activo: buscar en últimos 30 días solo
+                    const hace30 = new Date(Date.now()-30*24*60*60*1000).toISOString().split("T")[0];
+                    const recientes = facturas.filter(f=>f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda))&&f.fecha>=hace30);
+                    if(recientes.length>0) ultimaNum = Math.max(...recientes.map(f=>parseInt(f.comanda)));
+                  }
+                  // diferencia: cuántas comandas faltan entre la última y la nueva
+                  // Si es exactamente la siguiente (ultimaNum+1), diferencia=0 → no bloquea
+                  const diferencia = (comandaNum!==null && ultimaNum!==null) ? Math.max(0, comandaNum - ultimaNum - 1) : null;
                   
                   // Función para iniciar el turno (se llama directa o después de autorizar)
                   const iniciarTurno = (motivo="normal") => {
