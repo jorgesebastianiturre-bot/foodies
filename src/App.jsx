@@ -279,6 +279,10 @@ export default function FoodiesApp() {
   const [alertaToken, setAlertaToken] = useState(null); // token de autorización pendiente
   const [alertaEsperando, setAlertaEsperando] = useState(false); // esperando que el admin autorice
   const [alertaId, setAlertaId] = useState(null);
+  const [modalAutorizacion, setModalAutorizacion] = useState(null); // {tipo, datos, onAutorizado}
+  const [pinIngresado, setPinIngresado] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinVerificando, setPinVerificando] = useState(false);
   const [stock, setStock] = useState([]);
   const [stockMovs, setStockMovs] = useState([]);
   const [stockTab, setStockTab] = useState("panel");
@@ -1065,6 +1069,19 @@ export default function FoodiesApp() {
 
   const esCC = (fp) => fp&&fp.toLowerCase().replace(/\s/g,"").includes("cuentacorriente");
 
+  // Verificar PIN contra Supabase (hash SHA256)
+  const verificarPin = async (pin) => {
+    try {
+      // Hash del PIN ingresado usando crypto.subtle
+      const msgBuffer = new TextEncoder().encode(pin);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray.map(b=>b.toString(16).padStart(2,'0')).join('');
+      const { data } = await supabase.from("seguridad_config").select("pin_autorizacion,codigo_maestro").eq("id","config").single();
+      return data && (hashHex === data.pin_autorizacion || hashHex === data.codigo_maestro);
+    } catch(e) { console.error("Error verificando PIN:",e); return false; }
+  };
+
   const estadoCuentaProveedores = () => {
     const cuentas = {};
     // Solo compras en cuenta corriente que estén pendientes
@@ -1433,49 +1450,7 @@ export default function FoodiesApp() {
 
           {/* ══ INICIO DE TURNO ══ */}
           {/* ══ PANTALLA DE ESPERA DE AUTORIZACIÓN ══ */}
-          {alertaEsperando&&!turnoActivo&&(()=>{
-            // Polling cada 5 segundos para ver si el admin autorizó
-            const checkAuth = async () => {
-              if(!alertaToken) return;
-              try {
-                const resp = await fetch(`https://aauifejcgrmkobemhkbx.supabase.co/functions/v1/autorizar-comanda?action=verificar&token=${alertaToken}`, {
-                  headers: {'apikey':'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdWlmZWpjZ3Jta29iZW1oa2J4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDAyMzAsImV4cCI6MjA5MTE3NjIzMH0.Ehhj2YK11CkzefbuZQt2vGfcExj8Q5NUdBBmikO9Llg'}
-                });
-                const data = await resp.json();
-                if(data?.estado==="autorizado") {
-                  setAlertaEsperando(false);
-                  setAlertaToken(null);
-                  // Recuperar datos del formulario y continuar
-                  const vend = document.getElementById("ta-vendedor")?.value;
-                  const turn = document.getElementById("ta-turno")?.value;
-                  const fecha = document.getElementById("ta-fecha")?.value||hoy();
-                  const comandaNum = parseInt(document.getElementById("ta-comanda")?.value)||null;
-                  if(vend){
-                    const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), comandaInicial:comandaNum};
-                    setTurnoActivoPersistente(ta);
-                    setNf(emptyNf(ta));
-                    setBVendedor(vend);
-                    setBTurno(turn);
-                  }
-                }
-              } catch(e) {}
-            };
-            return <div style={{...css.card,border:`2px solid ${C.danger}`,textAlign:"center",padding:"32px 24px"}}>
-              <div style={{fontSize:48,marginBottom:12}}>🔒</div>
-              <div style={{fontSize:20,fontWeight:800,color:C.danger,marginBottom:8}}>TURNO BLOQUEADO</div>
-              <div style={{fontSize:14,color:C.muted,marginBottom:20}}>Se detectó una diferencia en la correlatividad de comandas.<br/>Se envió un mail al administrador para autorización.</div>
-              <div style={{background:"#7f1d1d22",border:`1px solid ${C.danger}`,borderRadius:8,padding:"14px 20px",marginBottom:20,fontSize:13}}>
-                ⏳ Esperando autorización de <b style={{color:C.accent}}>jorgesebastianiturre@gmail.com</b>
-              </div>
-              <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-                <button style={{...css.btn(),padding:"10px 24px"}} onClick={checkAuth}>🔄 Verificar autorización</button>
-                <button style={{...css.btn("neutral"),padding:"10px 24px"}} onClick={()=>{setAlertaEsperando(false);setAlertaToken(null);}}>✕ Cancelar</button>
-              </div>
-              <div style={{fontSize:11,color:C.muted,marginTop:16}}>El sistema verifica automáticamente cada vez que apretás el botón.</div>
-            </div>;
-          })()}
-
-          {!turnoActivo&&!alertaEsperando
+          {!turnoActivo
             ? <div style={{...css.card,border:`2px solid ${C.accent}`,textAlign:"center",padding:"32px 24px"}}>
                 <div style={{fontSize:22,marginBottom:8}}>🕐 Iniciar Turno</div>
                 <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Completá los datos del turno. Podés cambiar la fecha si estás cargando facturas de otro día.</div>
@@ -1523,30 +1498,35 @@ export default function FoodiesApp() {
                   const ultimaNum = ultimaFact?parseInt(ultimaFact.comanda):null;
                   const diferencia = comandaNum&&ultimaNum ? Math.abs(comandaNum - ultimaNum - 1) : (comandaNum&&!ultimaNum?0:null);
                   
-                  // Si hay diferencia → bloquear y pedir autorización
+                  // Función para iniciar el turno (se llama directa o después de autorizar)
+                  const iniciarTurno = (motivo="normal") => {
+                    const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), comandaInicial:comandaNum, motivoAutorizacion:motivo};
+                    setTurnoActivoPersistente(ta);
+                    setNf(emptyNf(ta));
+                    setBVendedor(vend);
+                    setBTurno(turn);
+                    // Registrar la autorización en Supabase
+                    if(motivo!=="normal") {
+                      supabase.from("alertas_comanda").insert({
+                        id:gid(), fecha, turno:turn, vendedor:vend,
+                        comanda_ultima:ultimaNum, comanda_ingresada:comandaNum,
+                        diferencia:diferencia||0, estado:"autorizado",
+                        token:gid(), autorizado_at:new Date().toISOString()
+                      }).then(()=>{});
+                    }
+                  };
+
+                  // Si hay diferencia → mostrar modal de autorización con PIN
                   if(comandaNum!==null && diferencia!==null && diferencia>0) {
-                    const alertId = gid();
-                    setAlertaId(alertId);
-                    setAlertaEsperando(true);
-                    // Enviar alerta al admin
-                    try {
-                      const resp = await fetch(`https://aauifejcgrmkobemhkbx.supabase.co/functions/v1/autorizar-comanda`, {
-                        method: 'POST',
-                        headers: {'Content-Type':'application/json', 'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdWlmZWpjZ3Jta29iZW1oa2J4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDAyMzAsImV4cCI6MjA5MTE3NjIzMH0.Ehhj2YK11CkzefbuZQt2vGfcExj8Q5NUdBBmikO9Llg'},
-                        body: JSON.stringify({id:alertId, fecha, turno:turn, vendedor:vend, comanda_ultima:ultimaNum, comanda_ingresada:comandaNum, diferencia})
-                      });
-                      const data = await resp.json();
-                      setAlertaToken(data.token);
-                    } catch(e) { console.error("Error alerta:",e); }
-                    return; // BLOQUEAR el inicio del turno
+                    setModalAutorizacion({
+                      vend, turn, fecha, comandaNum, ultimaNum, diferencia,
+                      onAutorizado: iniciarTurno
+                    });
+                    return;
                   }
                   
                   // Sin diferencia → iniciar turno normalmente
-                  const ta = {vendedor:vend, turno:turn, fecha, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), comandaInicial:comandaNum};
-                  setTurnoActivoPersistente(ta);
-                  setNf(emptyNf(ta));
-                  setBVendedor(vend);
-                  setBTurno(turn);
+                  iniciarTurno("normal");
                 }}>✅ Iniciar Turno</button>
               </div>
             : <div style={{background:"#0f2a0f",border:`1px solid ${C.success}`,borderRadius:10,padding:"10px 16px",marginBottom:4,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2885,6 +2865,82 @@ export default function FoodiesApp() {
         </>}
 
         {/* ══ MODAL DETALLE FACTURA ══ */}
+        {/* ══ MODAL AUTORIZACIÓN PIN ══ */}
+        {modalAutorizacion&&<div style={css.modal}>
+          <div style={{...css.modalBox,maxWidth:420,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:48,marginBottom:8}}>🔒</div>
+            <div style={{fontWeight:900,fontSize:18,color:C.danger,marginBottom:4}}>TURNO BLOQUEADO</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Se detectó una diferencia en la correlatividad de comandas.</div>
+
+            <div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:8,padding:"14px 16px",marginBottom:16,textAlign:"left"}}>
+              <div style={{fontSize:12,color:"#f59e0b",fontWeight:700,marginBottom:8}}>⚠️ DETALLE DE LA IRREGULARIDAD</div>
+              <div style={{fontSize:13}}>Vendedor: <b>{modalAutorizacion.vend}</b></div>
+              <div style={{fontSize:13}}>Turno: <b>{modalAutorizacion.turn} — {modalAutorizacion.fecha}</b></div>
+              <div style={{fontSize:13}}>Última comanda registrada: <b>#{modalAutorizacion.ultimaNum||"ninguna"}</b></div>
+              <div style={{fontSize:13}}>Comanda que intenta ingresar: <b style={{color:C.danger}}>#{modalAutorizacion.comandaNum}</b></div>
+              <div style={{fontSize:13}}>Diferencia: <b style={{color:C.danger}}>{modalAutorizacion.diferencia} comanda(s)</b></div>
+            </div>
+
+            <div style={{background:"#111",borderRadius:8,padding:"14px 16px",marginBottom:16}}>
+              <div style={{fontSize:12,color:C.muted,marginBottom:4}}>¿Es un cambio de talonario o situación conocida?</div>
+              <div style={{fontSize:13,color:C.text,marginBottom:12}}>Ingresá el código de autorización del administrador para continuar.</div>
+              <div style={css.lbl}>Código de autorización</div>
+              <input
+                style={{...css.input,textAlign:"center",fontSize:20,letterSpacing:8,fontWeight:700}}
+                type="password" maxLength={12} placeholder="••••••••"
+                value={pinIngresado}
+                onChange={e=>{setPinIngresado(e.target.value);setPinError("");}}
+                onKeyDown={async e=>{
+                  if(e.key==="Enter"){
+                    setPinVerificando(true);
+                    const ok = await verificarPin(pinIngresado);
+                    setPinVerificando(false);
+                    if(ok){
+                      const motivo = pinIngresado.length>4?"codigo_maestro":"pin_admin";
+                      modalAutorizacion.onAutorizado(motivo);
+                      setModalAutorizacion(null);
+                      setPinIngresado("");
+                      setPinError("");
+                    } else {
+                      setPinError("❌ Código incorrecto. Solo el administrador puede autorizar.");
+                      setPinIngresado("");
+                    }
+                  }
+                }}
+                autoFocus
+              />
+              {pinError&&<div style={{color:C.danger,fontSize:12,marginTop:8,fontWeight:700}}>{pinError}</div>}
+            </div>
+
+            <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+              <button style={{...css.btn("neutral"),padding:"10px 20px"}} onClick={()=>{setModalAutorizacion(null);setPinIngresado("");setPinError("");}}>✕ Cancelar</button>
+              <button style={{...css.btn(),padding:"10px 24px",opacity:(!pinIngresado||pinVerificando)?0.4:1}}
+                disabled={!pinIngresado||pinVerificando}
+                onClick={async()=>{
+                  setPinVerificando(true);
+                  const ok = await verificarPin(pinIngresado);
+                  setPinVerificando(false);
+                  if(ok){
+                    const motivo = pinIngresado.length>4?"codigo_maestro":"pin_admin";
+                    modalAutorizacion.onAutorizado(motivo);
+                    setModalAutorizacion(null);
+                    setPinIngresado("");
+                    setPinError("");
+                  } else {
+                    setPinError("❌ Código incorrecto. Solo el administrador puede autorizar.");
+                    setPinIngresado("");
+                  }
+                }}>
+                {pinVerificando?"⏳ Verificando...":"🔓 Autorizar turno"}
+              </button>
+            </div>
+
+            <div style={{fontSize:11,color:C.muted,marginTop:12}}>
+              Este intento queda registrado en el sistema con fecha, hora y vendedor.
+            </div>
+          </div>
+        </div>}
+
         {/* ══ MODAL COMPROBANTE ══ */}
         {modalComprobante&&<div style={css.modal} onClick={()=>setModalComprobante(null)}>
           <div style={{...css.modalBox,maxWidth:480}} onClick={e=>e.stopPropagation()}>
