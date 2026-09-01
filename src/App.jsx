@@ -279,6 +279,7 @@ export default function FoodiesApp() {
   const [alertaToken, setAlertaToken] = useState(null); // token de autorización pendiente
   const [alertaEsperando, setAlertaEsperando] = useState(false); // esperando que el admin autorice
   const [alertaId, setAlertaId] = useState(null);
+  const [bloqueoCorrelatividad, setBloqueoCorrelatividad] = useState(false);
   const [modalAutorizacion, setModalAutorizacion] = useState(null);
   const [talonarios, setTalonarios] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -482,6 +483,11 @@ export default function FoodiesApp() {
         estado:t.estado, obs:t.obs
       })));
     } catch(e) { console.error("talonarios:",e); }
+
+    try {
+      const { data:segCfg } = await supabase.from("seguridad_config").select("bloqueo_correlatividad").eq("id","config").single();
+      if(segCfg) setBloqueoCorrelatividad(segCfg.bloqueo_correlatividad||false);
+    } catch(e) {}
 
     try {
       const [insDb, movDb, visDb] = await Promise.all([
@@ -1598,7 +1604,7 @@ export default function FoodiesApp() {
                   };
 
                   // Si hay diferencia → mostrar modal de autorización con PIN
-                  if(comandaNum!==null && diferencia!==null && diferencia>0) {
+                  if(bloqueoCorrelatividad && comandaNum!==null && diferencia!==null && diferencia>0) {
                     setModalAutorizacion({
                       vend, turn, fecha, comandaNum, ultimaNum, diferencia,
                       onAutorizado: iniciarTurno
@@ -3952,6 +3958,29 @@ export default function FoodiesApp() {
         })()}
 
         {tab==="config"&&esAdmin&&<>
+          {/* Control de correlatividad */}
+          <div style={css.card}>
+            <div style={css.cardTitle}>🔐 Control de Correlatividad</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:600}}>Bloqueo por diferencia de comanda</div>
+                <div style={{fontSize:12,color:C.muted,marginTop:2}}>
+                  {bloqueoCorrelatividad
+                    ? "✅ Activo — el sistema bloquea el turno si la comanda no coincide"
+                    : "⚠️ Inactivo — el sistema registra pero NO bloquea"}
+                </div>
+              </div>
+              <button style={{...css.btn(bloqueoCorrelatividad?"primary":"neutral"),padding:"10px 20px"}}
+                onClick={async()=>{
+                  const nuevo = !bloqueoCorrelatividad;
+                  await supabase.from("seguridad_config").update({bloqueo_correlatividad:nuevo}).eq("id","config");
+                  setBloqueoCorrelatividad(nuevo);
+                }}>
+                {bloqueoCorrelatividad?"🔒 Desactivar bloqueo":"🔓 Activar bloqueo"}
+              </button>
+            </div>
+          </div>
+
           {/* Talonarios */}
           <div style={css.card}>
             <div style={{...css.cardTitle,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
