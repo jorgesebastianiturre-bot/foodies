@@ -2968,7 +2968,7 @@ export default function FoodiesApp() {
 
         {/* ══ MODAL DETALLE FACTURA ══ */}
         {/* ══ MODAL AUTORIZACIÓN PIN ══ */}
-        {modalAutorizacion&&<div style={css.modal}>
+        {modalAutorizacion&&(<div style={css.modal}>
           <div style={{...css.modalBox,maxWidth:420,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
             <div style={{fontSize:48,marginBottom:8}}>🔒</div>
             <div style={{fontWeight:900,fontSize:18,color:C.danger,marginBottom:4}}>TURNO BLOQUEADO</div>
@@ -3063,7 +3063,7 @@ export default function FoodiesApp() {
               Este intento queda registrado en el sistema con fecha, hora y vendedor.
             </div>
           </div>
-        </div>}
+        </div>)}
 
         {/* ══ MODAL COMPROBANTE ══ */}
         {modalComprobante&&<div style={css.modal} onClick={()=>setModalComprobante(null)}>
