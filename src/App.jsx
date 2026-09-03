@@ -2968,12 +2968,11 @@ export default function FoodiesApp() {
 
         {/* ══ MODAL DETALLE FACTURA ══ */}
         {/* ══ MODAL AUTORIZACIÓN PIN ══ */}
-        {modalAutorizacion&&(<div style={css.modal}>
+        {modalAutorizacion&&<div style={css.modal}>
           <div style={{...css.modalBox,maxWidth:420,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
             <div style={{fontSize:48,marginBottom:8}}>🔒</div>
             <div style={{fontWeight:900,fontSize:18,color:C.danger,marginBottom:4}}>TURNO BLOQUEADO</div>
             <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Se detectó una diferencia en la correlatividad de comandas.</div>
-
             <div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:8,padding:"14px 16px",marginBottom:16,textAlign:"left"}}>
               <div style={{fontSize:12,color:"#f59e0b",fontWeight:700,marginBottom:8}}>⚠️ DETALLE DE LA IRREGULARIDAD</div>
               <div style={{fontSize:13}}>Vendedor: <b>{modalAutorizacion.vend}</b></div>
@@ -2982,10 +2981,9 @@ export default function FoodiesApp() {
               <div style={{fontSize:13}}>Comanda que intenta ingresar: <b style={{color:C.danger}}>#{modalAutorizacion.comandaNum}</b></div>
               <div style={{fontSize:13}}>Diferencia: <b style={{color:C.danger}}>{modalAutorizacion.diferencia} comanda(s)</b></div>
             </div>
-
             <div style={{background:"#111",borderRadius:8,padding:"14px 16px",marginBottom:16}}>
               <div style={{fontSize:12,color:C.muted,marginBottom:4}}>¿Es un cambio de talonario o situación conocida?</div>
-              <div style={{fontSize:13,color:C.text,marginBottom:12}}>Si es un talonario nuevo, ingresá el primer y último número. Si es otra situación, dejá en blanco.</div>
+              <div style={{fontSize:13,color:C.text,marginBottom:10}}>Ingresá el código de autorización del administrador para continuar.</div>
               <div style={css.row}>
                 <div style={css.col}>
                   <div style={css.lbl}>N° desde (primer comanda)</div>
@@ -2998,33 +2996,16 @@ export default function FoodiesApp() {
               </div>
               <div style={{marginTop:10}}>
                 <div style={css.lbl}>Código de autorización del administrador</div>
-              <input
-                style={{...css.input,textAlign:"center",fontSize:20,letterSpacing:8,fontWeight:700}}
-                type="password" maxLength={12} placeholder="••••••••"
-                value={pinIngresado}
-                onChange={e=>{setPinIngresado(e.target.value);setPinError("");}}
-                onKeyDown={async e=>{
-                  if(e.key==="Enter"){
-                    setPinVerificando(true);
-                    const ok = await verificarPin(pinIngresado);
-                    setPinVerificando(false);
-                    if(ok){
-                      const motivo = pinIngresado.length>4?"codigo_maestro":"pin_admin";
-                      modalAutorizacion.onAutorizado(motivo);
-                      setModalAutorizacion(null);
-                      setPinIngresado("");
-                      setPinError("");
-                    } else {
-                      setPinError("❌ Código incorrecto. Solo el administrador puede autorizar.");
-                      setPinIngresado("");
-                    }
-                  }
-                }}
-                autoFocus
-              />
-              {pinError&&<div style={{color:C.danger,fontSize:12,marginTop:8,fontWeight:700}}>{pinError}</div>}
+                <input
+                  style={{...css.input,textAlign:"center",fontSize:20,letterSpacing:8,fontWeight:700,marginTop:4}}
+                  type="password" maxLength={12} placeholder="••••••••"
+                  value={pinIngresado}
+                  onChange={e=>{setPinIngresado(e.target.value);setPinError("");}}
+                  autoFocus
+                />
+                {pinError&&<div style={{color:C.danger,fontSize:12,marginTop:8,fontWeight:700}}>{pinError}</div>}
+              </div>
             </div>
-
             <div style={{display:"flex",gap:8,justifyContent:"center"}}>
               <button style={{...css.btn("neutral"),padding:"10px 20px"}} onClick={()=>{setModalAutorizacion(null);setPinIngresado("");setPinError("");}}>✕ Cancelar</button>
               <button style={{...css.btn(),padding:"10px 24px",opacity:(!pinIngresado||pinVerificando)?0.4:1}}
@@ -3035,14 +3016,9 @@ export default function FoodiesApp() {
                   setPinVerificando(false);
                   if(ok){
                     const motivo = pinIngresado.length>4?"codigo_maestro":"pin_admin";
-                    if(talDesde&&talHasta) {
-                      const talId = gid();
-                      await supabase.from("talonarios").insert({
-                        id:talId, numero_desde:parseInt(talDesde), numero_hasta:parseInt(talHasta),
-                        fecha_inicio:modalAutorizacion.fecha, turno_inicio:modalAutorizacion.turn,
-                        vendedor:modalAutorizacion.vend, estado:"activo", obs:talObs||"Cambio de talonario autorizado",
-                        autorizado_por:motivo
-                      });
+                    if(talDesde&&talHasta){
+                      const talId=gid();
+                      await supabase.from("talonarios").insert({id:talId,numero_desde:parseInt(talDesde),numero_hasta:parseInt(talHasta),fecha_inicio:modalAutorizacion.fecha,turno_inicio:modalAutorizacion.turn,vendedor:modalAutorizacion.vend,estado:"activo",obs:talObs||"Cambio de talonario autorizado",autorizado_por:motivo});
                       setTalonarios(prev=>[{id:talId,desde:parseInt(talDesde),hasta:parseInt(talHasta),fechaInicio:modalAutorizacion.fecha,turnoInicio:modalAutorizacion.turn,vendedor:modalAutorizacion.vend,estado:"activo",obs:talObs},...prev]);
                       setTalDesde(""); setTalHasta(""); setTalObs("");
                     }
@@ -3058,14 +3034,13 @@ export default function FoodiesApp() {
                 {pinVerificando?"⏳ Verificando...":"🔓 Autorizar turno"}
               </button>
             </div>
-
             <div style={{fontSize:11,color:C.muted,marginTop:12}}>
               Este intento queda registrado en el sistema con fecha, hora y vendedor.
             </div>
           </div>
-        </div>)}
+        </div>}
 
-        {/* ══ MODAL COMPROBANTE ══ */}
+                {/* ══ MODAL COMPROBANTE ══ */}
         {modalComprobante&&<div style={css.modal} onClick={()=>setModalComprobante(null)}>
           <div style={{...css.modalBox,maxWidth:480}} onClick={e=>e.stopPropagation()}>
             <div style={{fontWeight:800,fontSize:16,color:C.accent,marginBottom:16}}>🖨️ Generar Comprobante</div>
