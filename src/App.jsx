@@ -179,6 +179,43 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
   );
 }
 
+// ── Selector rápido con búsqueda (reemplaza <select> nativo en mobile) ──
+// Muestra el valor actual, al tocar despliega lista completa + búsqueda opcional
+function SelRapido({ opciones, valor, onChange, placeholder }) {
+  const [busq, setBusq] = useState("");
+  const [open, setOpen] = useState(false);
+  const filtradas = busq ? opciones.filter(o=>o.toLowerCase().includes(busq.toLowerCase())) : opciones;
+  return (
+    <div style={{position:"relative"}}>
+      <div style={{...css.input,display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",userSelect:"none",minHeight:38,boxSizing:"border-box",paddingRight:10}}
+        className="fInput"
+        onClick={()=>setOpen(o=>!o)}
+        tabIndex={0}
+        onBlur={()=>setTimeout(()=>{setOpen(false);setBusq("");},150)}
+      >
+        <span style={{color:valor?C.text:C.muted,fontSize:13}}>{valor||placeholder||"Seleccionar..."}</span>
+        <span style={{fontSize:10,color:C.muted,marginLeft:6}}>{open?"▲":"▼"}</span>
+      </div>
+      {open&&(
+        <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:500,boxShadow:"0 8px 24px #000b",overflow:"hidden"}}>
+          <input style={{...css.input,borderRadius:0,border:"none",borderBottom:`1px solid ${C.border}`,width:"100%",boxSizing:"border-box",fontSize:13}}
+            placeholder="Buscar..." value={busq} onChange={e=>setBusq(e.target.value)} autoFocus autoComplete="off"/>
+          <div style={{maxHeight:200,overflowY:"auto"}}>
+            {filtradas.map(o=>(
+              <div key={o}
+                style={{padding:"13px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`,fontWeight:o===valor?700:400,color:o===valor?C.accent:C.text,background:o===valor?"#1e1e1e":"transparent"}}
+                onMouseDown={()=>{onChange(o);setOpen(false);setBusq("");}}>
+                {o===valor&&"✓ "}{o}
+              </div>
+            ))}
+            {filtradas.length===0&&<div style={{padding:"12px 14px",color:C.muted,fontSize:12}}>Sin coincidencias</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FoodiesApp() {
   // ── Login ──
   const [usuario, setUsuario] = useState(null);
@@ -201,6 +238,7 @@ export default function FoodiesApp() {
   // Buscador cliente en factura
   const [nfCliBusq, setNfCliBusq] = useState(""); const [nfCliOpen, setNfCliOpen] = useState(false);
   const [nfCliNew, setNfCliNew] = useState(false); const [nfCliNewTel, setNfCliNewTel] = useState(""); const [nfCliNewApe, setNfCliNewApe] = useState("");
+  const [nfReset, setNfReset] = useState(0); // key para resetear SelRapido al emitir
   const [editando, setEditando] = useState(null);
   const [editSelProd, setEditSelProd] = useState(""); const [editSelQty, setEditSelQty] = useState(""); const [editSelPrecio, setEditSelPrecio] = useState("");
   // Historial filtros (CAMBIO 4)
@@ -520,7 +558,7 @@ export default function FoodiesApp() {
       medio_pago1:f.medioPago1, importe1:f.importe1, medio_pago2:f.medioPago2, importe2:f.importe2,
       transfer_confirmada:f.transferConfirmada, total:f.total, notas:f.notas, estado:f.estado });
     await supabase.from("factura_items").insert(nf.items.map(i=>({id:i.id,factura_id:id,prod_id:i.prodId,nombre:i.nombre,precio:i.precio,qty:i.qty})));
-    setFacturas(prev=>[f,...prev]); setNf(emptyNf()); setNfCliBusq(""); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel(""); setTab("historial");
+    setFacturas(prev=>[f,...prev]); setNf(emptyNf()); setNfCliBusq(""); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel(""); setNfReset(r=>r+1); setTab("historial");
   };
 
   const confirmarTransfer = async (id) => {
@@ -1053,9 +1091,9 @@ export default function FoodiesApp() {
             <div style={css.row} className="fRow">
               <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} className="fInput" type="date" value={nf.fecha} onChange={e=>setNf(p=>({...p,fecha:e.target.value}))}/></div>
               <div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} className="fSel" value={nf.turno} onChange={e=>setNf(p=>({...p,turno:e.target.value}))}>{["Mañana","Noche"].map(t=><option key={t}>{t}</option>)}</select></div>
-              <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><select style={css.sel} className="fSel" value={nf.tipoVenta} onChange={e=>setNf(p=>({...p,tipoVenta:e.target.value}))}>{tiposVenta.map(t=><option key={t}>{t}</option>)}</select></div>
-              <div style={css.col}><div style={css.lbl}>Vendedor *</div><select style={css.sel} className="fSel" value={nf.vendedor} onChange={e=>setNf(p=>({...p,vendedor:e.target.value}))}><option value="">— Seleccionar —</option>{vendedores.map(v=><option key={v}>{v}</option>)}</select></div>
-              {nf.tipoVenta==="Envio"&&<div style={css.col}><div style={css.lbl}>Cadete</div><select style={css.sel} className="fSel" value={nf.cadete} onChange={e=>setNf(p=>({...p,cadete:e.target.value}))}><option value="">— Seleccionar —</option>{cadetes.map(c=><option key={c}>{c}</option>)}</select></div>}
+              <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={v=>setNf(p=>({...p,tipoVenta:v}))} placeholder="Tipo..."/></div>
+              <div style={css.col}><div style={css.lbl}>Vendedor *</div><SelRapido key={`ve-${nfReset}`} opciones={vendedores} valor={nf.vendedor} onChange={v=>setNf(p=>({...p,vendedor:v}))} placeholder="Vendedor..."/></div>
+              {nf.tipoVenta==="Envio"&&<div style={css.col}><div style={css.lbl}>Cadete</div><SelRapido key={`ca-${nfReset}`} opciones={cadetes} valor={nf.cadete} onChange={v=>setNf(p=>({...p,cadete:v}))} placeholder="Cadete..."/></div>}
               <div style={css.col}><div style={css.lbl}>Cliente</div>
                 <div style={{position:"relative"}}>
                   <input style={{...css.input,width:"100%",boxSizing:"border-box"}} className="fInput"
@@ -1134,18 +1172,21 @@ export default function FoodiesApp() {
             <div style={css.row} className="fRow">
               <div style={{...css.col,position:"relative"}}><div style={css.lbl}>Buscar producto</div>
                 <input style={css.input} className="fInput" placeholder="Ej: lomito, pizza, coca..." value={selBusq} onChange={e=>{setSelBusq(e.target.value);setSelProd("");setSelPrecio("");}} autoComplete="off"/>
-                {selBusq.length>0&&selProd===""&&(
+                {selBusq.length>0&&selProd===""&&(()=>{
+                  const palabras=selBusq.toLowerCase().split(/\s+/).filter(Boolean);
+                  const filtrados=prodsActivos.filter(p=>palabras.every(w=>p.nombre.toLowerCase().includes(w)));
+                  return(
                   <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:100,maxHeight:220,overflowY:"auto"}} className="fDropdown">
-                    {prodsActivos.filter(p=>p.nombre.toLowerCase().includes(selBusq.toLowerCase())).slice(0,12).map(p=>(
+                    {filtrados.slice(0,14).map(p=>(
                       <div key={p.id} className="fDropItem" style={{padding:"10px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`}}
                         onClick={()=>{setSelProd(p.id);setSelBusq(p.nombre);setSelPrecio(String(p.precio));}}
                         onMouseEnter={e=>e.currentTarget.style.background="#2a2a2a"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                         <span>{p.nombre}</span><span style={{color:C.accent,fontWeight:800,fontSize:14}}>{fmt(p.precio)}</span>
                       </div>
                     ))}
-                    {prodsActivos.filter(p=>p.nombre.toLowerCase().includes(selBusq.toLowerCase())).length===0&&<div style={{padding:"12px 14px",color:C.muted,fontSize:13}}>Sin resultados</div>}
-                  </div>
-                )}
+                    {filtrados.length===0&&<div style={{padding:"12px 14px",color:C.muted,fontSize:13}}>Sin resultados</div>}
+                  </div>);
+                })()}
               </div>
               <div style={{...css.col,maxWidth:80}}><div style={css.lbl}>Cant.</div><input style={{...css.input,maxWidth:80}} className="fInput" type="number" min="1" placeholder="1" value={selQty} onChange={e=>setSelQty(e.target.value)}/></div>
               <div style={{...css.col,maxWidth:150}}><div style={css.lbl}>Precio cobrado</div><input style={{...css.input,maxWidth:150}} className="fInput" type="number" placeholder="Sugerido" value={selPrecio} onChange={e=>setSelPrecio(e.target.value)}/></div>
