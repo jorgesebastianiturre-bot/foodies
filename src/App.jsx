@@ -198,6 +198,9 @@ export default function FoodiesApp() {
   const [tiposVenta, setTiposVenta] = useState([]);
   const [nf, setNf] = useState(emptyNf());
   const [selProd, setSelProd] = useState(""); const [selQty, setSelQty] = useState(""); const [selPrecio, setSelPrecio] = useState(""); const [selBusq, setSelBusq] = useState("");
+  // Buscador cliente en factura
+  const [nfCliBusq, setNfCliBusq] = useState(""); const [nfCliOpen, setNfCliOpen] = useState(false);
+  const [nfCliNew, setNfCliNew] = useState(false); const [nfCliNewTel, setNfCliNewTel] = useState(""); const [nfCliNewApe, setNfCliNewApe] = useState("");
   const [editando, setEditando] = useState(null);
   const [editSelProd, setEditSelProd] = useState(""); const [editSelQty, setEditSelQty] = useState(""); const [editSelPrecio, setEditSelPrecio] = useState("");
   // Historial filtros (CAMBIO 4)
@@ -517,7 +520,7 @@ export default function FoodiesApp() {
       medio_pago1:f.medioPago1, importe1:f.importe1, medio_pago2:f.medioPago2, importe2:f.importe2,
       transfer_confirmada:f.transferConfirmada, total:f.total, notas:f.notas, estado:f.estado });
     await supabase.from("factura_items").insert(nf.items.map(i=>({id:i.id,factura_id:id,prod_id:i.prodId,nombre:i.nombre,precio:i.precio,qty:i.qty})));
-    setFacturas(prev=>[f,...prev]); setNf(emptyNf()); setTab("historial");
+    setFacturas(prev=>[f,...prev]); setNf(emptyNf()); setNfCliBusq(""); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel(""); setTab("historial");
   };
 
   const confirmarTransfer = async (id) => {
@@ -1053,7 +1056,68 @@ export default function FoodiesApp() {
               <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><select style={css.sel} className="fSel" value={nf.tipoVenta} onChange={e=>setNf(p=>({...p,tipoVenta:e.target.value}))}>{tiposVenta.map(t=><option key={t}>{t}</option>)}</select></div>
               <div style={css.col}><div style={css.lbl}>Vendedor *</div><select style={css.sel} className="fSel" value={nf.vendedor} onChange={e=>setNf(p=>({...p,vendedor:e.target.value}))}><option value="">— Seleccionar —</option>{vendedores.map(v=><option key={v}>{v}</option>)}</select></div>
               {nf.tipoVenta==="Envio"&&<div style={css.col}><div style={css.lbl}>Cadete</div><select style={css.sel} className="fSel" value={nf.cadete} onChange={e=>setNf(p=>({...p,cadete:e.target.value}))}><option value="">— Seleccionar —</option>{cadetes.map(c=><option key={c}>{c}</option>)}</select></div>}
-              <div style={css.col}><div style={css.lbl}>Cliente</div><select style={css.sel} className="fSel" value={nf.clienteId} onChange={e=>setNf(p=>({...p,clienteId:e.target.value}))}><option value="">— Sin cliente —</option>{clientes.map(c=><option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>)}</select></div>
+              <div style={css.col}><div style={css.lbl}>Cliente</div>
+                <div style={{position:"relative"}}>
+                  <input style={{...css.input,width:"100%",boxSizing:"border-box"}} className="fInput"
+                    placeholder="Buscar cliente..."
+                    value={nfCliBusq}
+                    onChange={e=>{
+                      const v=e.target.value; setNfCliBusq(v); setNfCliOpen(true); setNfCliNew(false);
+                      if(!v){setNf(p=>({...p,clienteId:""}));}
+                    }}
+                    onFocus={()=>setNfCliOpen(true)}
+                    onBlur={()=>setTimeout(()=>setNfCliOpen(false),200)}
+                    autoComplete="off"
+                  />
+                  {nf.clienteId&&<span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",fontSize:10,color:C.success,fontWeight:700,pointerEvents:"none"}}>✓</span>}
+                  {nfCliOpen&&nfCliBusq.length>0&&(()=>{
+                    const coinciden=clientes.filter(c=>(c.nombre+" "+c.apellido).toLowerCase().includes(nfCliBusq.toLowerCase())).slice(0,8);
+                    return(
+                      <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:500,maxHeight:260,overflowY:"auto",boxShadow:"0 8px 24px #000a"}}>
+                        {coinciden.length===0&&(
+                          <div style={{padding:"10px 14px"}}>
+                            <div style={{color:C.muted,fontSize:12,marginBottom:6}}>No encontrado</div>
+                            {!nfCliNew?(
+                              <button style={{...css.btn(),width:"100%",textAlign:"left",fontSize:12}} onMouseDown={()=>{setNfCliNew(true);}}>
+                                + Agregar "{nfCliBusq}" como nuevo cliente
+                              </button>
+                            ):(
+                              <div>
+                                <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:6}}>Nuevo cliente</div>
+                                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                                  <input style={{...css.input,fontSize:13}} placeholder="Apellido (opcional)" value={nfCliNewApe} onChange={e=>setNfCliNewApe(e.target.value)}/>
+                                  <input style={{...css.input,fontSize:13}} placeholder="Teléfono (opcional)" value={nfCliNewTel} onChange={e=>setNfCliNewTel(e.target.value)} type="tel"/>
+                                  <button style={css.btn()} onMouseDown={async()=>{
+                                    if(!nfCliBusq) return;
+                                    const id=gid();
+                                    await supabase.from("clientes").insert({id,nombre:nfCliBusq,apellido:nfCliNewApe||"",telefono:nfCliNewTel||"",direccion:""});
+                                    const nuevo={id,nombre:nfCliBusq,apellido:nfCliNewApe,telefono:nfCliNewTel,direccion:""};
+                                    setClientes(prev=>[...prev,nuevo]);
+                                    setNf(p=>({...p,clienteId:id}));
+                                    setNfCliBusq(nfCliBusq+(nfCliNewApe?" "+nfCliNewApe:""));
+                                    setNfCliOpen(false); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel("");
+                                  }}>✓ Guardar y seleccionar</button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {coinciden.map(c=>(
+                          <div key={c.id} style={{padding:"12px 14px",cursor:"pointer",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                            onMouseDown={()=>{
+                              setNf(p=>({...p,clienteId:c.id}));
+                              setNfCliBusq(c.nombre+(c.apellido?" "+c.apellido:""));
+                              setNfCliOpen(false);
+                            }}>
+                            <span style={{fontWeight:600,fontSize:13}}>{c.nombre} {c.apellido}</span>
+                            {c.telefono&&<span style={{fontSize:11,color:C.muted}}>{c.telefono}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
               <div style={{...css.col,maxWidth:130}}><div style={css.lbl}>🧾 N° Comanda</div><input style={{...css.input,maxWidth:130,borderColor:C.accent,fontWeight:700,fontSize:15}} className="fInput" type="number" placeholder="Ej: 42" value={nf.comanda} onChange={e=>setNf(p=>({...p,comanda:e.target.value}))}/></div>
             </div>
           </div>
