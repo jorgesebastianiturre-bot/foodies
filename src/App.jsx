@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -184,27 +184,36 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
 function SelRapido({ opciones, valor, onChange, placeholder }) {
   const [busq, setBusq] = useState("");
   const [open, setOpen] = useState(false);
-  const filtradas = busq ? opciones.filter(o=>o.toLowerCase().includes(busq.toLowerCase())) : opciones;
+  const ref = useRef(null);
+  const lista = (opciones||[]).filter(o=>o!=null).map(String);
+  const conBusqueda = lista.length > 8; // con pocas opciones no hace falta buscador (evita que salte el teclado en el celular)
+  const filtradas = busq ? lista.filter(o=>o.toLowerCase().includes(busq.toLowerCase())) : lista;
+  const cerrar = ()=>{ setOpen(false); setBusq(""); };
+  // Cerrar solo al tocar FUERA del selector (antes se cerraba sola al abrir en el celular)
+  useEffect(()=>{
+    if(!open) return;
+    const fuera = e=>{ if(ref.current && !ref.current.contains(e.target)) cerrar(); };
+    document.addEventListener("pointerdown", fuera);
+    return ()=>document.removeEventListener("pointerdown", fuera);
+  },[open]);
   return (
-    <div style={{position:"relative"}}>
+    <div ref={ref} style={{position:"relative"}}>
       <div style={{...css.input,display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",userSelect:"none",minHeight:38,boxSizing:"border-box",paddingRight:10}}
         className="fInput"
-        onClick={()=>setOpen(o=>!o)}
-        tabIndex={0}
-        onBlur={()=>setTimeout(()=>{setOpen(false);setBusq("");},150)}
+        onClick={()=>{ if(open) cerrar(); else setOpen(true); }}
       >
         <span style={{color:valor?C.text:C.muted,fontSize:13}}>{valor||placeholder||"Seleccionar..."}</span>
         <span style={{fontSize:10,color:C.muted,marginLeft:6}}>{open?"▲":"▼"}</span>
       </div>
       {open&&(
         <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:500,boxShadow:"0 8px 24px #000b",overflow:"hidden"}}>
-          <input style={{...css.input,borderRadius:0,border:"none",borderBottom:`1px solid ${C.border}`,width:"100%",boxSizing:"border-box",fontSize:13}}
-            placeholder="Buscar..." value={busq} onChange={e=>setBusq(e.target.value)} autoFocus autoComplete="off"/>
-          <div style={{maxHeight:200,overflowY:"auto"}}>
+          {conBusqueda&&<input style={{...css.input,borderRadius:0,border:"none",borderBottom:`1px solid ${C.border}`,width:"100%",boxSizing:"border-box",fontSize:16}}
+            placeholder="Buscar..." value={busq} onChange={e=>setBusq(e.target.value)} autoComplete="off"/>}
+          <div style={{maxHeight:240,overflowY:"auto"}}>
             {filtradas.map(o=>(
               <div key={o}
                 style={{padding:"13px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`,fontWeight:o===valor?700:400,color:o===valor?C.accent:C.text,background:o===valor?"#1e1e1e":"transparent"}}
-                onMouseDown={()=>{onChange(o);setOpen(false);setBusq("");}}>
+                onClick={()=>{onChange(o);cerrar();}}>
                 {o===valor&&"✓ "}{o}
               </div>
             ))}
