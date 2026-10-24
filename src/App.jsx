@@ -184,46 +184,61 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
   );
 }
 
-// ── Selector rápido con búsqueda (reemplaza <select> nativo en mobile) ──
-// Muestra el valor actual, al tocar despliega lista completa + búsqueda opcional
-function SelRapido({ opciones, valor, onChange, placeholder }) {
-  const [busq, setBusq] = useState("");
+// Pasa el foco a otro campo por id (para que Enter avance al siguiente casillero)
+const irA = (id) => setTimeout(()=>{ const el=document.getElementById(id); if(el){ el.focus(); if(el.select&&el.type!=="date") try{el.select();}catch(e){} } }, 30);
+
+// ── Selector escribible (combobox) ──
+// Se escribe para filtrar, se baja/sube con las flechas, Enter elige y pasa al siguiente campo.
+// En el celular se puede tocar la opción. `vacio` agrega una opción "nada" (valor "").
+function SelRapido({ opciones, valor, onChange, placeholder, id, onEnter, vacio }) {
+  const [texto, setTexto] = useState(null); // null = no está escribiendo: se muestra el valor elegido
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  const lista = (opciones||[]).filter(o=>o!=null).map(String);
-  const conBusqueda = lista.length > 8; // con pocas opciones no hace falta buscador (evita que salte el teclado en el celular)
-  const filtradas = busq ? lista.filter(o=>o.toLowerCase().includes(busq.toLowerCase())) : lista;
-  const cerrar = ()=>{ setOpen(false); setBusq(""); };
-  // Cerrar solo al tocar FUERA del selector (antes se cerraba sola al abrir en el celular)
+  const [idx, setIdx] = useState(0);
+  const ref = useRef(null); const listRef = useRef(null);
+  const base = (opciones||[]).filter(o=>o!=null&&o!=="").map(String);
+  const items = vacio ? [{v:"",l:vacio}, ...base.map(o=>({v:o,l:o}))] : base.map(o=>({v:o,l:o}));
+  const q = normTxt(texto||"");
+  const filtradas = q ? items.filter(it=>{ const n=normTxt(it.l); return q.split(" ").every(t=>n.split(" ").some(w=>w.startsWith(t))) || n.replace(/ /g,"").includes(q.replace(/ /g,"")); }) : items;
+  const elegido = items.find(it=>it.v===valor);
+  const cerrar = ()=>{ setOpen(false); setTexto(null); };
+  const abrir = ()=>{ setOpen(true); const i=items.findIndex(it=>it.v===valor); setIdx(i>=0?i:0); };
+  const elegir = (it, viaTeclado) => { onChange(it.v); setOpen(false); setTexto(null); if(viaTeclado&&onEnter) onEnter(it.v); };
   useEffect(()=>{
     if(!open) return;
     const fuera = e=>{ if(ref.current && !ref.current.contains(e.target)) cerrar(); };
     document.addEventListener("pointerdown", fuera);
     return ()=>document.removeEventListener("pointerdown", fuera);
   },[open]);
+  useEffect(()=>{ const el=listRef.current?.children[idx]; if(el&&el.scrollIntoView) el.scrollIntoView({block:"nearest"}); },[idx,open]);
+  const onKeyDown = (e)=>{
+    if(e.key==="ArrowDown"){ e.preventDefault(); if(!open){ abrir(); return; } setIdx(i=>Math.min(i+1,Math.max(filtradas.length-1,0))); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); setIdx(i=>Math.max(i-1,0)); }
+    else if(e.key==="Enter"){ e.preventDefault(); if(open&&filtradas[idx]) elegir(filtradas[idx],true); else if(!open&&onEnter) onEnter(valor); }
+    else if(e.key==="Tab"){ if(open&&texto&&filtradas[idx]) elegir(filtradas[idx],false); else cerrar(); }
+    else if(e.key==="Escape"){ cerrar(); }
+  };
   return (
     <div ref={ref} style={{position:"relative"}}>
-      <div style={{...css.input,display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",userSelect:"none",minHeight:38,boxSizing:"border-box",paddingRight:10}}
-        className="fInput"
-        onClick={()=>{ if(open) cerrar(); else setOpen(true); }}
-      >
-        <span style={{color:valor?C.text:C.muted,fontSize:13}}>{valor||placeholder||"Seleccionar..."}</span>
-        <span style={{fontSize:10,color:C.muted,marginLeft:6}}>{open?"▲":"▼"}</span>
-      </div>
+      <input id={id} className="fInput" autoComplete="off" enterKeyHint="next"
+        style={{...css.input,width:"100%",boxSizing:"border-box",paddingRight:28,color:texto===null&&!elegido?C.muted:C.text}}
+        placeholder={placeholder||"Escribí..."}
+        value={texto!==null ? texto : (elegido?elegido.l:"")}
+        onFocus={e=>{ abrir(); try{e.target.select();}catch(err){} }}
+        onClick={()=>{ if(!open) abrir(); }}
+        onChange={e=>{ setTexto(e.target.value); setOpen(true); setIdx(0); }}
+        onKeyDown={onKeyDown}/>
+      <span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:10,color:C.muted,pointerEvents:"none"}}>{open?"▲":"▼"}</span>
       {open&&(
-        <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:500,boxShadow:"0 8px 24px #000b",overflow:"hidden"}}>
-          {conBusqueda&&<input style={{...css.input,borderRadius:0,border:"none",borderBottom:`1px solid ${C.border}`,width:"100%",boxSizing:"border-box",fontSize:16}}
-            placeholder="Buscar..." value={busq} onChange={e=>setBusq(e.target.value)} autoComplete="off"/>}
-          <div style={{maxHeight:240,overflowY:"auto"}}>
-            {filtradas.map(o=>(
-              <div key={o}
-                style={{padding:"13px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`,fontWeight:o===valor?700:400,color:o===valor?C.accent:C.text,background:o===valor?"#1e1e1e":"transparent"}}
-                onClick={()=>{onChange(o);cerrar();}}>
-                {o===valor&&"✓ "}{o}
-              </div>
-            ))}
-            {filtradas.length===0&&<div style={{padding:"12px 14px",color:C.muted,fontSize:12}}>Sin coincidencias</div>}
-          </div>
+        <div ref={listRef} style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:500,boxShadow:"0 8px 24px #000b",maxHeight:260,overflowY:"auto",overscrollBehavior:"contain"}}>
+          {filtradas.map((it,i)=>(
+            <div key={it.v||"__vacio"} className="fDropHover"
+              style={{padding:"12px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`,fontWeight:it.v===valor?700:400,color:it.v===valor?C.accent:(it.v===""?C.muted:C.text),background:i===idx?"#2d2d2d":"transparent",borderLeft:i===idx?`3px solid ${C.accent}`:"3px solid transparent"}}
+              onPointerDown={e=>e.preventDefault()}
+              onClick={()=>elegir(it,false)}>
+              {it.v===valor&&"✓ "}{it.l}
+            </div>
+          ))}
+          {filtradas.length===0&&<div style={{padding:"12px 14px",color:C.muted,fontSize:12}}>Sin coincidencias</div>}
         </div>
       )}
     </div>
@@ -260,6 +275,10 @@ export default function FoodiesApp() {
   const [pinVerificando, setPinVerificando] = useState(false);
   const [alertasCorr, setAlertasCorr] = useState([]);
   const [selOpen, setSelOpen] = useState(false);
+  const [selIdx, setSelIdx] = useState(0);
+  const selListRef = useRef(null);
+  // Mantener visible el producto marcado con las flechas
+  useEffect(()=>{ const el=selListRef.current?.querySelector(`[data-idx="${selIdx}"]`); if(el&&el.scrollIntoView) el.scrollIntoView({block:"nearest"}); },[selIdx,selOpen]);
   const selRef = useRef(null);
   // Cerrar la lista de productos al tocar fuera
   useEffect(()=>{
@@ -273,6 +292,22 @@ export default function FoodiesApp() {
   const [nfCliBusq, setNfCliBusq] = useState(""); const [nfCliOpen, setNfCliOpen] = useState(false);
   const [nfCliNew, setNfCliNew] = useState(false); const [nfCliNewTel, setNfCliNewTel] = useState(""); const [nfCliNewApe, setNfCliNewApe] = useState("");
   const [nfReset, setNfReset] = useState(0); // key para resetear SelRapido al emitir
+  const [nfCliIdx, setNfCliIdx] = useState(0);
+  const [masOpen, setMasOpen] = useState(false); // menú "Más" de la barra inferior del celular
+  // ── Impresión de factura ──
+  const DATOS_LOCAL_DEF = {nombre:"FOODIES LK", direccion:"San Luis", telefono:"", instagram:"", cuit:""};
+  const [datosLocal, setDatosLocal] = useState(DATOS_LOCAL_DEF);
+  const [datosLocalGuardado, setDatosLocalGuardado] = useState(false);
+  const [modalImprimir, setModalImprimir] = useState(null); // factura a imprimir
+  const [impCli, setImpCli] = useState({nombre:"",direccion:"",telefono:"",dni:""});
+  const nfCliRef = useRef(null);
+  // Cerrar la lista de clientes al tocar fuera (antes se cerraba sola al tocar "Apellido")
+  useEffect(()=>{
+    if(!nfCliOpen) return;
+    const fuera = e=>{ if(nfCliRef.current && !nfCliRef.current.contains(e.target)) setNfCliOpen(false); };
+    document.addEventListener("pointerdown", fuera);
+    return ()=>document.removeEventListener("pointerdown", fuera);
+  },[nfCliOpen]);
   const [editando, setEditando] = useState(null);
   const [editSelProd, setEditSelProd] = useState(""); const [editSelQty, setEditSelQty] = useState(""); const [editSelPrecio, setEditSelPrecio] = useState("");
   // Historial filtros (CAMBIO 4)
@@ -369,6 +404,12 @@ export default function FoodiesApp() {
         efectivoEsperado:c.efectivo_esperado, diferencia:c.diferencia, obs:c.obs
       })));
     } catch(e) { console.error("cierres:",e); }
+
+    // Datos del local para la factura impresa (fila "datos_local" en configuracion)
+    try {
+      const { data:dl } = await supabase.from("configuracion").select("valor").eq("id","datos_local").maybeSingle();
+      if(dl&&dl.valor) setDatosLocal({...DATOS_LOCAL_DEF, ...JSON.parse(dl.valor)});
+    } catch(e) { console.error("datos_local:",e); }
 
     // Alertas de correlatividad (turnos abiertos con código) — últimos 7 días, sin marcar como vistas
     try {
@@ -574,10 +615,54 @@ export default function FoodiesApp() {
     }
     return res.sort((a,b)=>b.score-a.score || (ventasPorProd[b.p.id]||0)-(ventasPorProd[a.p.id]||0) || a.p.nombre.length-b.p.nombre.length).map(r=>r.p);
   };
-  const elegirProducto = (p) => {
+  // viaTeclado: con Enter pasa a la cantidad; con toque (celular) baja el teclado para ver la factura
+  const elegirProducto = (p, viaTeclado=false) => {
     setSelProd(p.id); setSelBusq(p.nombre); setSelPrecio(String(p.precio)); setSelOpen(false);
-    try { document.activeElement?.blur(); } catch(e) {} // baja el teclado para ver la factura
+    if(viaTeclado) irA("nf-qty");
+    else { try { document.activeElement?.blur(); } catch(e) {} }
   };
+
+  // ── Cliente en la factura: buscar, elegir con teclado o dar de alta ──
+  const opcionesCliente = () => {
+    const q = normTxt(nfCliBusq); if(!q) return [];
+    const toks = q.split(" ");
+    const coinciden = clientes.filter(c=>{ const n=normTxt((c.nombre||"")+" "+(c.apellido||"")); return toks.every(t=>n.split(" ").some(w=>w.startsWith(t))) || n.replace(/ /g,"").includes(q.replace(/ /g,"")); }).slice(0,30);
+    const exacto = coinciden.some(c=>normTxt((c.nombre||"")+" "+(c.apellido||""))===q);
+    const ops = coinciden.map(c=>({c}));
+    if(!exacto) ops.push({nuevo:true});
+    return ops;
+  };
+  const elegirOpcionCliente = (o) => {
+    if(o.nuevo){ setNfCliNew(true); setNfCliOpen(false); irA("nf-cli-ape"); return; }
+    setNf(p=>({...p,clienteId:o.c.id}));
+    setNfCliBusq(o.c.nombre+(o.c.apellido?" "+o.c.apellido:""));
+    setNfCliOpen(false); setNfCliNew(false);
+    irA("nf-comanda");
+  };
+  const guardarClienteNuevo = async () => {
+    const nombre = nfCliBusq.trim(); if(!nombre) return;
+    const id = gid();
+    const { error } = await supabase.from("clientes").insert({id,nombre,apellido:nfCliNewApe||"",telefono:nfCliNewTel||"",direccion:""});
+    if(error){ alert("No se pudo guardar el cliente: "+error.message); return; }
+    setClientes(prev=>[...prev,{id,nombre,apellido:nfCliNewApe,telefono:nfCliNewTel,direccion:""}]);
+    setNf(p=>({...p,clienteId:id}));
+    setNfCliBusq(nombre+(nfCliNewApe?" "+nfCliNewApe:""));
+    setNfCliOpen(false); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel("");
+    irA("nf-comanda");
+  };
+
+  // ── Tipo de venta: si es Envío, se agrega solo el ítem de envío al principio ──
+  const prodEnvio = productos.find(p=>p.id==="P062") || productos.find(p=>normTxt(p.nombre)==="envio");
+  const cambiarTipoVenta = (v) => setNf(p=>{
+    const esEnvio = normTxt(v)==="envio";
+    let items = p.items;
+    if(prodEnvio){
+      const tiene = items.some(i=>i.prodId===prodEnvio.id);
+      if(esEnvio&&!tiene) items = [{id:gid(),prodId:prodEnvio.id,nombre:prodEnvio.nombre,precio:prodEnvio.precio,qty:1},...items];
+      if(!esEnvio&&tiene) items = items.filter(i=>i.prodId!==prodEnvio.id);
+    }
+    return {...p, tipoVenta:v, cadete:esEnvio?p.cadete:"", items};
+  });
   const totalItems = nf.items.reduce((s,i)=>s+i.precio*i.qty,0);
   const totalPagos = (parseFloat(nf.importe1)||0)+(parseFloat(nf.importe2)||0);
   const dif = totalItems - totalPagos;
@@ -601,6 +686,9 @@ export default function FoodiesApp() {
   const ordenTurno = (fecha, turno) => (fecha||"") + (turno==="Noche"?"2":"1");
   // Última comanda del turno anterior (o del mismo turno si se está reabriendo).
   // Descarta números mal tipeados que se alejan mucho del resto del turno.
+  // Los talonarios traen cada número DOS veces (original y copia):
+  //   si la última se usó 1 vez → la siguiente válida es la misma (la copia);
+  //   si ya se usó 2 veces → la siguiente es el número siguiente.
   const ultimaComandaAnterior = (fecha, turno) => {
     const actual = ordenTurno(fecha, turno);
     const conNum = facturas.filter(f=>/^\d+$/.test(String(f.comanda||"").trim()) && ordenTurno(f.fecha,f.turno) <= actual);
@@ -610,7 +698,10 @@ export default function FoodiesApp() {
     const nums = delTurno.map(f=>parseInt(f.comanda)).sort((a,b)=>a-b);
     const mediana = nums[Math.floor(nums.length/2)];
     const validos = nums.filter(n=>Math.abs(n-mediana)<=300);
-    return { num: Math.max(...validos), fecha: delTurno[0].fecha, turno: delTurno[0].turno };
+    const num = Math.max(...validos);
+    const usos = conNum.filter(f=>parseInt(f.comanda)===num).length;
+    const esCopia = usos<2;
+    return { num, usos, siguiente: esCopia ? num : num+1, esCopia, fecha: delTurno[0].fecha, turno: delTurno[0].turno };
   };
   // Verificar código del administrador contra Supabase (hash SHA-256)
   const verificarPin = async (pin) => {
@@ -627,6 +718,7 @@ export default function FoodiesApp() {
       motivoAutorizacion:motivo, ultimaAnterior:d.ultima?.num??null, diferencia:d.diferencia??null };
     guardarTurno(ta);
     setCierreFecha(d.fecha); setCierreTurno(d.turno);
+    irA("nf-tipo");
     setTaComanda(""); setTaVendedor("");
     if(motivo!=="normal") {
       const alerta = { id:gid(), fecha:d.fecha, turno:d.turno, vendedor:d.vendedor,
@@ -643,7 +735,7 @@ export default function FoodiesApp() {
     if(!comandaNum) { alert("Ingresá el número de la primera comanda del turno"); return; }
     const fecha = taFecha || hoy();
     const ultima = ultimaComandaAnterior(fecha, taTurno);
-    const diferencia = ultima ? comandaNum - ultima.num - 1 : null; // 0 = sigue la correlatividad
+    const diferencia = ultima ? comandaNum - ultima.siguiente : null; // 0 = sigue la correlatividad
     const d = { vendedor:taVendedor, turno:taTurno, fecha, comandaNum, ultima, diferencia };
     if(ultima && diferencia!==0) { setPinIngresado(""); setPinError(""); setModalAutorizacion(d); return; }
     iniciarTurno(d, "normal");
@@ -652,6 +744,83 @@ export default function FoodiesApp() {
     if(!window.confirm("¿Cerrar el turno? Para cargar más ventas vas a tener que abrir uno nuevo.")) return;
     guardarTurno(null);
   };
+  // ── FACTURA IMPRIMIBLE ──
+  const guardarDatosLocal = async () => {
+    const { error } = await supabase.from("configuracion").upsert({id:"datos_local",tipo:"datos_local",valor:JSON.stringify(datosLocal),activo:true},{onConflict:"id"});
+    if(error){ alert("No se pudo guardar: "+error.message); return; }
+    setDatosLocalGuardado(true); setTimeout(()=>setDatosLocalGuardado(false),2500);
+  };
+  const abrirImprimir = async (f) => {
+    const cli = clientes.find(c=>c.id===f.clienteId);
+    setImpCli({ nombre: f.cliente || (cli?((cli.nombre||"")+" "+(cli.apellido||"")).trim():""), direccion: cli?.direccion||"", telefono: cli?.telefono||"", dni: "" });
+    setModalImprimir(f);
+    irA("imp-nombre");
+    // Traer los productos de esta factura desde la base (la lista general puede venir incompleta en facturas viejas)
+    try {
+      const { data } = await supabase.from("factura_items").select("*").eq("factura_id", f.id);
+      if(data&&data.length) setModalImprimir(m=>m&&m.id===f.id?{...m,items:data.map(i=>({id:i.id,prodId:i.prod_id,nombre:i.nombre,precio:i.precio,qty:i.qty}))}:m);
+    } catch(e) { console.error("items factura:",e); }
+  };
+  const imprimirFactura = () => {
+    const f = modalImprimir; if(!f) return;
+    const esc = (s) => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const L = datosLocal;
+    const fechaTxt = f.fecha ? f.fecha.split("-").reverse().join("/") : "";
+    const pagos = [ [f.medioPago1, f.importe1], [f.medioPago2, f.importe2] ].filter(([m])=>m);
+    const filas = (f.items||[]).map(i=>`<tr><td class="c">${esc(i.qty)}</td><td>${esc(i.nombre)}</td><td class="r">${esc(fmt(i.precio))}</td><td class="r b">${esc(fmt(i.precio*i.qty))}</td></tr>`).join("");
+    const logo = `<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" rx="16" fill="#f97316"/><path d="M20 46V18h24v7H28v5h13v7H28v9z" fill="#fff"/><circle cx="46" cy="44" r="4" fill="#fff"/></svg>`;
+    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Factura ${esc(f.numero)} - ${esc(L.nombre)}</title>
+<style>
+@page{size:A4;margin:14mm}
+*{box-sizing:border-box}body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1c1917;margin:0;background:#f5f5f4}
+.hoja{max-width:780px;margin:20px auto;background:#fff;padding:36px 40px;border-radius:14px;box-shadow:0 6px 30px #0001}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:4px solid #f97316;padding-bottom:18px}
+.marca{display:flex;gap:14px;align-items:center}.marca h1{margin:0;font-size:30px;letter-spacing:3px;font-weight:900}.marca h1 span{color:#f97316}
+.marca .sub{font-size:12px;color:#78716c;margin-top:4px;line-height:1.5}
+.doc{text-align:right}.doc .t{font-size:12px;letter-spacing:2px;color:#78716c;font-weight:700}.doc .n{font-size:22px;font-weight:900;color:#f97316;margin:2px 0}
+.doc .f{font-size:13px;color:#44403c;line-height:1.6}
+.cli{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 18px;margin:20px 0;font-size:13px}
+.cli b{color:#9a3412;font-size:11px;letter-spacing:1px;text-transform:uppercase;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px}th{background:#1c1917;color:#fff;text-align:left;padding:10px;font-size:11px;letter-spacing:1px;text-transform:uppercase}
+td{padding:10px;border-bottom:1px solid #e7e5e4}.c{text-align:center;width:60px}.r{text-align:right;white-space:nowrap}.b{font-weight:700}
+.tot{display:flex;justify-content:flex-end;margin-top:16px}.tot div{background:#1c1917;color:#fff;border-radius:10px;padding:14px 22px;text-align:right}
+.tot small{display:block;font-size:11px;letter-spacing:2px;color:#a8a29e}.tot strong{font-size:28px;color:#fb923c}
+.pago{font-size:12px;color:#57534e;margin-top:10px;text-align:right}
+.pie{margin-top:30px;text-align:center;font-size:12px;color:#78716c;border-top:1px dashed #d6d3d1;padding-top:16px;line-height:1.7}
+.pie .gr{font-size:16px;font-weight:800;color:#f97316}
+.barra{max-width:780px;margin:16px auto 0;display:flex;gap:10px;justify-content:flex-end;padding:0 10px}
+.barra button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:12px 22px;font-size:15px;font-weight:700;cursor:pointer}
+@media print{body{background:#fff}.hoja{box-shadow:none;margin:0;padding:0}.barra{display:none}}
+@media (max-width:600px){.hoja{padding:20px;margin:8px}.top{flex-direction:column}.doc{text-align:left}.cli{grid-template-columns:1fr}}
+</style></head><body>
+<div class="barra"><button onclick="window.print()">🖨️ Imprimir / Guardar PDF</button></div>
+<div class="hoja">
+  <div class="top">
+    <div class="marca">${logo}<div><h1>${esc(L.nombre).replace(/FOODIES/i,'<span>FOODIES</span>')}</h1>
+      <div class="sub">${[L.direccion, L.telefono&&("Tel/WhatsApp: "+L.telefono), L.instagram, L.cuit&&("CUIT: "+L.cuit)].filter(Boolean).map(esc).join("<br>")}</div></div></div>
+    <div class="doc"><div class="t">COMPROBANTE DE VENTA</div><div class="n">${esc(f.numero)}</div>
+      <div class="f">Fecha: <b>${esc(fechaTxt)}</b><br>${f.comanda&&f.comanda!=="—"?"Comanda: <b>#"+esc(f.comanda)+"</b><br>":""}${esc(f.tipoVenta||"")}${f.vendedor?" · Atendió: "+esc(f.vendedor):""}</div></div>
+  </div>
+  <div class="cli">
+    <div><b>Cliente</b>${esc(impCli.nombre)||"Consumidor final"}</div>
+    <div><b>DNI</b>${esc(impCli.dni)||"—"}</div>
+    <div><b>Dirección</b>${esc(impCli.direccion)||"—"}</div>
+    <div><b>Teléfono</b>${esc(impCli.telefono)||"—"}</div>
+  </div>
+  <table><thead><tr><th class="c">Cant.</th><th>Descripción</th><th class="r">P. unit.</th><th class="r">Subtotal</th></tr></thead><tbody>${filas}</tbody></table>
+  <div class="tot"><div><small>TOTAL</small><strong>${esc(fmt(f.total))}</strong></div></div>
+  <div class="pago">Forma de pago: ${pagos.map(([m,imp])=>esc(m)+(parseFloat(imp)?" "+esc(fmt(parseFloat(imp))):"")).join(" + ")}</div>
+  <div class="pie"><div class="gr">¡Gracias por elegir ${esc(L.nombre)}!</div>${L.instagram?"Seguinos en "+esc(L.instagram)+"<br>":""}${L.telefono?"Pedidos: "+esc(L.telefono)+"<br>":""}<span style="font-size:10px">Documento no válido como factura fiscal</span></div>
+</div>
+<script>setTimeout(function(){window.print()},500)</script>
+</body></html>`;
+    const w = window.open("","_blank");
+    if(!w){ alert("El navegador bloqueó la ventana. Permití las ventanas emergentes para esta página."); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setModalImprimir(null);
+  };
+
   const marcarAlertaVista = async (id) => {
     await supabase.from("alertas_comanda").update({estado:"visto"}).eq("id",id);
     setAlertasCorr(prev=>prev.filter(a=>a.id!==id));
@@ -1134,6 +1303,7 @@ export default function FoodiesApp() {
 .fQCats{display:none;gap:8px;padding:6px 0 2px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;flex-shrink:0}
 .fQCats::-webkit-scrollbar{display:none}
 @media (hover:hover){.fDropHover:hover{background:#2a2a2a}}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #f97316;outline-offset:1px}
 .fQCat{flex-shrink:0;padding:8px 14px;border-radius:999px;border:none;background:#252525;color:#737373;font-size:13px;font-weight:700;cursor:pointer;font-family:'Sora',sans-serif;white-space:nowrap;min-height:38px}
 .fQCat.active{background:#f97316;color:#fff}
 `}</style>
@@ -1202,15 +1372,28 @@ export default function FoodiesApp() {
       {/* ── BOTTOM NAV MOBILE ── */}
       <div className="fBnav">
         <div className="fBnavInner">
-          {navs.slice(0,5).map(t=>(
-            <button key={t.k} className={`fBnavBtn${tab===t.k?" active":""}`} onClick={()=>setTab(t.k)}>
+          {(navs.length>5?navs.slice(0,4):navs).map(t=>(
+            <button key={t.k} className={`fBnavBtn${tab===t.k?" active":""}`} onClick={()=>{setTab(t.k);setMasOpen(false);}}>
               {(t.badge||0)>0&&<span className="fBnavBadge">{t.badge}</span>}
               <span className="fBnavIcon">{t.l.split(" ")[0]}</span>
               <span>{t.l.replace(/[^\w\s]/g,"").trim().substring(0,9)}</span>
             </button>
           ))}
+          {navs.length>5&&<button className={`fBnavBtn${(masOpen||navs.slice(4).some(t=>t.k===tab))?" active":""}`} onClick={()=>setMasOpen(o=>!o)}>
+            {navs.slice(4).reduce((s,t)=>s+(t.badge||0),0)>0&&<span className="fBnavBadge">{navs.slice(4).reduce((s,t)=>s+(t.badge||0),0)}</span>}
+            <span className="fBnavIcon">☰</span><span>Más</span>
+          </button>}
         </div>
       </div>
+      {masOpen&&<div className="fBnavMas" style={{position:"fixed",inset:0,background:"#000a",zIndex:199}} onClick={()=>setMasOpen(false)}>
+        <div style={{position:"absolute",left:0,right:0,bottom:64,background:"#161616",borderTop:`2px solid ${C.accent}`,borderRadius:"16px 16px 0 0",padding:"10px 12px 14px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,maxHeight:"70vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+          {navs.slice(4).map(t=>(
+            <button key={t.k} style={{...css.nb(tab===t.k),width:"100%",justifyContent:"flex-start",padding:"14px 12px",fontSize:14,position:"relative"}} onClick={()=>{setTab(t.k);setMasOpen(false);}}>
+              {t.l}{(t.badge||0)>0&&<span style={{marginLeft:6,background:C.danger,color:"#fff",borderRadius:999,fontSize:10,padding:"1px 6px",fontWeight:800}}>{t.badge}</span>}
+            </button>
+          ))}
+        </div>
+      </div>}
 
       <main style={css.main} className="fMain">
         {esVentas&&<div style={css.grid(120)}>
@@ -1243,7 +1426,7 @@ export default function FoodiesApp() {
             <div style={{textAlign:"center",fontWeight:900,fontSize:17,color:C.danger,marginBottom:4}}>La comanda no sigue la correlatividad</div>
             <div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:8,padding:"12px 14px",margin:"12px 0",fontSize:13,lineHeight:1.6}}>
               Última comanda: <b>#{modalAutorizacion.ultima?.num}</b> ({modalAutorizacion.ultima?.turno} {modalAutorizacion.ultima?.fecha})<br/>
-              Tendría que seguir: <b>#{(modalAutorizacion.ultima?.num||0)+1}</b><br/>
+              Tendría que seguir: <b>#{modalAutorizacion.ultima?.siguiente}</b>{modalAutorizacion.ultima?.esCopia?" (la copia)":""}<br/>
               Ingresada: <b style={{color:C.danger}}>#{modalAutorizacion.comandaNum}</b>
               {modalAutorizacion.diferencia>0&&<> · faltan <b style={{color:C.danger}}>{modalAutorizacion.diferencia}</b></>}
               {modalAutorizacion.diferencia<0&&<> · <b style={{color:C.danger}}>número repetido o hacia atrás</b></>}
@@ -1251,11 +1434,11 @@ export default function FoodiesApp() {
             <div style={css.lbl}>Código de autorización del administrador</div>
             <input style={{...css.input,width:"100%",boxSizing:"border-box",textAlign:"center",fontSize:20,letterSpacing:6,fontWeight:700}}
               type="password" inputMode="numeric" maxLength={12} placeholder="••••" value={pinIngresado}
-              onChange={e=>{setPinIngresado(e.target.value);setPinError("");}} autoFocus/>
+              onChange={e=>{setPinIngresado(e.target.value);setPinError("");}} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();document.getElementById("pin-ok")?.click();}}} autoFocus/>
             {pinError&&<div style={{color:C.danger,fontSize:12,marginTop:8,fontWeight:700}}>{pinError}</div>}
             <div style={{display:"flex",gap:8,marginTop:14}}>
               <button style={{...css.btn("neutral"),flex:1,padding:"12px"}} onClick={()=>{setModalAutorizacion(null);setPinIngresado("");setPinError("");}}>✕ Cancelar</button>
-              <button style={{...css.btn(),flex:1,padding:"12px",opacity:(!pinIngresado||pinVerificando)?0.4:1}} disabled={!pinIngresado||pinVerificando}
+              <button id="pin-ok" style={{...css.btn(),flex:1,padding:"12px",opacity:(!pinIngresado||pinVerificando)?0.4:1}} disabled={!pinIngresado||pinVerificando}
                 onClick={async()=>{
                   setPinVerificando(true);
                   const ok = await verificarPin(pinIngresado);
@@ -1268,6 +1451,24 @@ export default function FoodiesApp() {
           </div>
         </div>}
 
+        {/* ══ MODAL IMPRIMIR FACTURA ══ */}
+        {modalImprimir&&<div style={css.modal} onClick={()=>setModalImprimir(null)}>
+          <div style={{...css.modalBox,maxWidth:460}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:900,fontSize:17,marginBottom:2}}>🖨️ Imprimir factura {modalImprimir.numero}</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:14}}>{modalImprimir.fecha} · {fmt(modalImprimir.total)} · {(modalImprimir.items||[]).length} producto{(modalImprimir.items||[]).length!==1?"s":""}. Completá los datos del cliente (todo opcional).</div>
+            {[["imp-nombre","nombre","Nombre y apellido","text","imp-dni"],["imp-dni","dni","DNI / CUIT","text","imp-dir"],["imp-dir","direccion","Dirección","text","imp-tel"],["imp-tel","telefono","Teléfono","tel",null]].map(([id,k,lbl,type,sig])=>(
+              <div key={id} style={{marginBottom:10}}><div style={css.lbl}>{lbl}</div>
+                <input id={id} type={type} style={{...css.input,width:"100%",boxSizing:"border-box"}} value={impCli[k]} onChange={e=>setImpCli(p=>({...p,[k]:e.target.value}))} enterKeyHint={sig?"next":"go"}
+                  onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault(); if(sig) irA(sig); else imprimirFactura();}}}/>
+              </div>))}
+            <div style={{display:"flex",gap:8,marginTop:6}}>
+              <button style={{...css.btn("neutral"),flex:1,padding:12}} onClick={()=>setModalImprimir(null)}>Cancelar</button>
+              <button style={{...css.btn(),flex:2,padding:12}} onClick={imprimirFactura}>🖨️ Imprimir / PDF</button>
+            </div>
+            {!datosLocal.telefono&&esAdmin&&<div style={{fontSize:11,color:C.warn,marginTop:10}}>💡 Cargá el teléfono e Instagram del local en Configuración → Datos del local, para que salgan en la factura.</div>}
+          </div>
+        </div>}
+
         {/* ══ NUEVA FACTURA ══ */}
         {tab==="nueva"&&esVentas&&!turnoActivo&&(()=>{
           const ult = ultimaComandaAnterior(taFecha||hoy(), taTurno);
@@ -1275,12 +1476,12 @@ export default function FoodiesApp() {
             <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>🕐 Abrir turno</div>
             <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Estos datos se usan en todas las ventas del turno. La fecha es la de hoy, pero la podés cambiar.</div>
             <div style={css.row} className="fRow">
-              <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} className="fInput" type="date" value={taFecha} onChange={e=>setTaFecha(e.target.value)}/></div>
-              <div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} className="fSel" value={taTurno} onChange={e=>setTaTurno(e.target.value)}>{["Mañana","Noche"].map(t=><option key={t}>{t}</option>)}</select></div>
-              <div style={css.col}><div style={css.lbl}>Vendedor *</div><SelRapido opciones={vendedores} valor={taVendedor} onChange={setTaVendedor} placeholder="Vendedor..."/></div>
+              <div style={css.col}><div style={css.lbl}>Fecha</div><input id="ta-fecha" style={css.input} className="fInput" type="date" value={taFecha} onChange={e=>setTaFecha(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("ta-turno");}}}/></div>
+              <div style={css.col}><div style={css.lbl}>Turno</div><SelRapido id="ta-turno" opciones={["Mañana","Noche"]} valor={taTurno} onChange={setTaTurno} onEnter={()=>irA("ta-vendedor")} placeholder="Mañana / Noche"/></div>
+              <div style={css.col}><div style={css.lbl}>Vendedor *</div><SelRapido id="ta-vendedor" opciones={vendedores} valor={taVendedor} onChange={setTaVendedor} onEnter={()=>irA("ta-comanda")} placeholder="Escribí el vendedor..."/></div>
               <div style={css.col}><div style={css.lbl}>🧾 N° primera comanda *</div>
-                <input style={{...css.input,borderColor:C.accent,fontWeight:700,fontSize:15}} className="fInput" type="number" inputMode="numeric" placeholder="Ej: 7978924" value={taComanda} onChange={e=>setTaComanda(e.target.value)}/>
-                {ult&&<div style={{fontSize:11,color:"#f59e0b",marginTop:4}}>Última comanda: <b>#{ult.num}</b> ({ult.turno} {ult.fecha}) → sigue la <b>#{ult.num+1}</b></div>}
+                <input id="ta-comanda" style={{...css.input,borderColor:C.accent,fontWeight:700,fontSize:15}} className="fInput" type="number" inputMode="numeric" enterKeyHint="go" placeholder="Ej: 7978924" value={taComanda} onChange={e=>setTaComanda(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();abrirTurno();}}}/>
+                {ult&&<div style={{fontSize:11,color:"#f59e0b",marginTop:4}}>Última comanda: <b>#{ult.num}</b> ({ult.turno} {ult.fecha}, usada {ult.usos} {ult.usos===1?"vez":"veces"}) → sigue la <b>#{ult.siguiente}</b>{ult.esCopia?" (la copia)":""}</div>}
               </div>
             </div>
             <div style={{marginTop:16}}><button style={{...css.btn(),padding:"14px 28px",fontSize:15,width:"100%"}} className="fBtn" onClick={abrirTurno}>✅ Abrir turno</button></div>
@@ -1304,71 +1505,65 @@ export default function FoodiesApp() {
           </div>}
           <div style={css.card} className="fCard"><div style={css.cardTitle}>📋 Datos del pedido</div>
             <div style={css.row} className="fRow">
-              <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={v=>setNf(p=>({...p,tipoVenta:v}))} placeholder="Tipo..."/></div>
-              {nf.tipoVenta==="Envio"&&<div style={css.col}><div style={css.lbl}>Cadete</div><SelRapido key={`ca-${nfReset}`} opciones={cadetes} valor={nf.cadete} onChange={v=>setNf(p=>({...p,cadete:v}))} placeholder="Cadete..."/></div>}
-              <div style={css.col}><div style={css.lbl}>Cliente</div>
+              <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido id="nf-tipo" key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={cambiarTipoVenta} onEnter={v=>irA(normTxt(v)==="envio"?"nf-cadete":"nf-cliente")} placeholder="Salón, envío, mostrador..."/></div>
+              {nf.tipoVenta==="Envio"&&<div style={css.col}><div style={css.lbl}>Cadete</div><SelRapido id="nf-cadete" key={`ca-${nfReset}`} opciones={cadetes} valor={nf.cadete} onChange={v=>setNf(p=>({...p,cadete:v}))} onEnter={()=>irA("nf-cliente")} placeholder="Escribí el cadete..."/></div>}
+              <div ref={nfCliRef} style={css.col}><div style={css.lbl}>Cliente</div>
                 <div style={{position:"relative"}}>
-                  <input style={{...css.input,width:"100%",boxSizing:"border-box"}} className="fInput"
-                    placeholder="Buscar cliente..."
+                  <input id="nf-cliente" style={{...css.input,width:"100%",boxSizing:"border-box"}} className="fInput"
+                    placeholder="Escribí el cliente..." enterKeyHint="next"
                     value={nfCliBusq}
                     onChange={e=>{
-                      const v=e.target.value; setNfCliBusq(v); setNfCliOpen(true); setNfCliNew(false);
-                      if(!v){setNf(p=>({...p,clienteId:""}));}
+                      const v=e.target.value; setNfCliBusq(v); setNfCliOpen(true); setNfCliNew(false); setNfCliIdx(0);
+                      setNf(p=>({...p,clienteId:""}));
                     }}
-                    onFocus={()=>setNfCliOpen(true)}
-                    onBlur={()=>setTimeout(()=>setNfCliOpen(false),200)}
+                    onFocus={()=>{ if(nfCliBusq&&!nf.clienteId) setNfCliOpen(true); }}
+                    onKeyDown={e=>{
+                      const ops = opcionesCliente();
+                      if(e.key==="ArrowDown"){ e.preventDefault(); setNfCliOpen(true); setNfCliIdx(i=>Math.min(i+1,Math.max(ops.length-1,0))); }
+                      else if(e.key==="ArrowUp"){ e.preventDefault(); setNfCliIdx(i=>Math.max(i-1,0)); }
+                      else if(e.key==="Enter"){ e.preventDefault();
+                        if(nfCliOpen&&ops[nfCliIdx]) elegirOpcionCliente(ops[nfCliIdx]);
+                        else irA("nf-comanda");
+                      }
+                      else if(e.key==="Escape"){ setNfCliOpen(false); }
+                    }}
                     autoComplete="off"
                   />
                   {nf.clienteId&&<span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",fontSize:10,color:C.success,fontWeight:700,pointerEvents:"none"}}>✓</span>}
-                  {nfCliOpen&&nfCliBusq.length>0&&(()=>{
-                    const coinciden=clientes.filter(c=>(c.nombre+" "+c.apellido).toLowerCase().includes(nfCliBusq.toLowerCase())).slice(0,8);
+                  {nfCliOpen&&nfCliBusq.trim().length>0&&!nfCliNew&&(()=>{
+                    const ops = opcionesCliente();
                     return(
-                      <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:500,maxHeight:260,overflowY:"auto",boxShadow:"0 8px 24px #000a"}}>
-                        {coinciden.length===0&&(
-                          <div style={{padding:"10px 14px"}}>
-                            <div style={{color:C.muted,fontSize:12,marginBottom:6}}>No encontrado</div>
-                            {!nfCliNew?(
-                              <button style={{...css.btn(),width:"100%",textAlign:"left",fontSize:12}} onMouseDown={()=>{setNfCliNew(true);}}>
-                                + Agregar "{nfCliBusq}" como nuevo cliente
-                              </button>
-                            ):(
-                              <div>
-                                <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:6}}>Nuevo cliente</div>
-                                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                                  <input style={{...css.input,fontSize:13}} placeholder="Apellido (opcional)" value={nfCliNewApe} onChange={e=>setNfCliNewApe(e.target.value)}/>
-                                  <input style={{...css.input,fontSize:13}} placeholder="Teléfono (opcional)" value={nfCliNewTel} onChange={e=>setNfCliNewTel(e.target.value)} type="tel"/>
-                                  <button style={css.btn()} onMouseDown={async()=>{
-                                    if(!nfCliBusq) return;
-                                    const id=gid();
-                                    await supabase.from("clientes").insert({id,nombre:nfCliBusq,apellido:nfCliNewApe||"",telefono:nfCliNewTel||"",direccion:""});
-                                    const nuevo={id,nombre:nfCliBusq,apellido:nfCliNewApe,telefono:nfCliNewTel,direccion:""};
-                                    setClientes(prev=>[...prev,nuevo]);
-                                    setNf(p=>({...p,clienteId:id}));
-                                    setNfCliBusq(nfCliBusq+(nfCliNewApe?" "+nfCliNewApe:""));
-                                    setNfCliOpen(false); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel("");
-                                  }}>✓ Guardar y seleccionar</button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {coinciden.map(c=>(
-                          <div key={c.id} style={{padding:"12px 14px",cursor:"pointer",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}
-                            onMouseDown={()=>{
-                              setNf(p=>({...p,clienteId:c.id}));
-                              setNfCliBusq(c.nombre+(c.apellido?" "+c.apellido:""));
-                              setNfCliOpen(false);
-                            }}>
-                            <span style={{fontWeight:600,fontSize:13}}>{c.nombre} {c.apellido}</span>
-                            {c.telefono&&<span style={{fontSize:11,color:C.muted}}>{c.telefono}</span>}
+                      <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:500,maxHeight:260,overflowY:"auto",overscrollBehavior:"contain",boxShadow:"0 8px 24px #000a"}}>
+                        {ops.map((o,i)=>(
+                          <div key={o.nuevo?"__nuevo":o.c.id} className="fDropHover"
+                            style={{padding:"12px 14px",cursor:"pointer",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:i===nfCliIdx?"#2d2d2d":"transparent",borderLeft:i===nfCliIdx?`3px solid ${C.accent}`:"3px solid transparent"}}
+                            onPointerDown={e=>e.preventDefault()}
+                            onClick={()=>elegirOpcionCliente(o)}>
+                            {o.nuevo
+                              ?<span style={{fontWeight:700,fontSize:13,color:C.accent}}>+ Agregar "{nfCliBusq.trim()}" como cliente nuevo</span>
+                              :<><span style={{fontWeight:600,fontSize:13}}>{o.c.nombre} {o.c.apellido}</span>{o.c.telefono&&<span style={{fontSize:11,color:C.muted}}>{o.c.telefono}</span>}</>}
                           </div>
                         ))}
                       </div>
                     );
                   })()}
                 </div>
+                {nfCliNew&&<div style={{background:"#111",border:`1px solid ${C.accent}`,borderRadius:8,padding:10,marginTop:6}}>
+                  <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:6}}>Cliente nuevo: {nfCliBusq.trim()}</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <input id="nf-cli-ape" style={{...css.input,fontSize:14}} placeholder="Apellido (opcional)" value={nfCliNewApe} onChange={e=>setNfCliNewApe(e.target.value)} enterKeyHint="next"
+                      onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("nf-cli-tel");}}}/>
+                    <input id="nf-cli-tel" style={{...css.input,fontSize:14}} placeholder="Teléfono (opcional)" value={nfCliNewTel} onChange={e=>setNfCliNewTel(e.target.value)} type="tel" enterKeyHint="done"
+                      onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();guardarClienteNuevo();}}}/>
+                    <div style={{display:"flex",gap:6}}>
+                      <button style={{...css.btn("neutral"),flex:1}} onClick={()=>{setNfCliNew(false);irA("nf-cliente");}}>Cancelar</button>
+                      <button style={{...css.btn(),flex:2}} onClick={guardarClienteNuevo}>✓ Guardar cliente</button>
+                    </div>
+                  </div>
+                </div>}
               </div>
-              <div style={{...css.col,maxWidth:130}}><div style={css.lbl}>🧾 N° Comanda</div><input style={{...css.input,maxWidth:130,borderColor:C.accent,fontWeight:700,fontSize:15}} className="fInput" type="number" placeholder="Ej: 42" value={nf.comanda} onChange={e=>setNf(p=>({...p,comanda:e.target.value}))}/></div>
+              <div style={{...css.col,maxWidth:160}}><div style={css.lbl}>🧾 N° Comanda</div><input id="nf-comanda" style={{...css.input,maxWidth:160,borderColor:C.accent,fontWeight:700,fontSize:15}} className="fInput" type="number" inputMode="numeric" enterKeyHint="next" placeholder="Ej: 7978924" value={nf.comanda} onChange={e=>setNf(p=>({...p,comanda:e.target.value}))}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("nf-prod");}}}/></div>
             </div>
           </div>
           <div style={css.card} className="fCard"><div style={css.cardTitle}>🛒 Productos</div>
@@ -1384,21 +1579,32 @@ export default function FoodiesApp() {
             <div style={css.row} className="fRow">
               <div ref={selRef} style={{...css.col,position:"relative"}}><div style={css.lbl}>Buscar producto</div>
                 <div style={{position:"relative"}}>
-                  <input style={{...css.input,width:"100%",boxSizing:"border-box",paddingRight:36}} className="fInput" placeholder="Ej: sand mila, pizza esp, coca..." value={selBusq}
-                    onChange={e=>{setSelBusq(e.target.value);setSelProd("");setSelPrecio("");setSelOpen(true);}}
+                  <input id="nf-prod" style={{...css.input,width:"100%",boxSizing:"border-box",paddingRight:36}} className="fInput" placeholder="Ej: sand mila, pizza esp, coca..." value={selBusq}
+                    onChange={e=>{setSelBusq(e.target.value);setSelProd("");setSelPrecio("");setSelOpen(true);setSelIdx(0);}}
                     onFocus={()=>{ if(selBusq&&!selProd) setSelOpen(true); }}
-                    onKeyDown={e=>{ if(e.key==="Enter"){ const r=buscarProductos(selBusq); if(r.length){ e.preventDefault(); elegirProducto(r[0]); } } if(e.key==="Escape") setSelOpen(false); }}
-                    autoComplete="off" enterKeyHint="done"/>
+                    onKeyDown={e=>{
+                      const r = (selOpen&&selBusq&&!selProd) ? buscarProductos(selBusq) : [];
+                      if(e.key==="ArrowDown"){ e.preventDefault(); if(!selOpen&&selBusq&&!selProd){ setSelOpen(true); return; } setSelIdx(i=>Math.min(i+1,Math.max(r.length-1,0))); }
+                      else if(e.key==="ArrowUp"){ e.preventDefault(); setSelIdx(i=>Math.max(i-1,0)); }
+                      else if(e.key==="Enter"){ e.preventDefault();
+                        if(r[selIdx]) elegirProducto(r[selIdx], true);     // elige el marcado y pasa a la cantidad
+                        else if(selProd) irA("nf-qty");
+                        else if(!selBusq.trim()) irA("nf-medio1");        // sin producto: pasa al pago
+                      }
+                      else if(e.key==="Escape") setSelOpen(false);
+                    }}
+                    autoComplete="off" enterKeyHint="next"/>
                   {selBusq&&<button type="button" aria-label="Borrar búsqueda" style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:6}}
                     onClick={()=>{setSelBusq("");setSelProd("");setSelPrecio("");setSelOpen(false);}}>✕</button>}
                 </div>
                 {selOpen&&selBusq.length>0&&selProd===""&&(()=>{
                   const filtrados=buscarProductos(selBusq);
                   return(
-                  <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:100,maxHeight:"45vh",overflowY:"auto",overscrollBehavior:"contain",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 24px #000b"}} className="fDropdown">
-                    {filtrados.length>0&&<div style={{padding:"6px 14px",fontSize:11,color:C.muted,borderBottom:`1px solid ${C.border}`}}>{filtrados.length} producto{filtrados.length!==1?"s":""} · tocá uno para elegirlo</div>}
-                    {filtrados.map(p=>(
-                      <div key={p.id} className="fDropItem fDropHover" style={{padding:"10px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",gap:10}}
+                  <div ref={selListRef} style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:100,maxHeight:"45vh",overflowY:"auto",overscrollBehavior:"contain",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 24px #000b"}} className="fDropdown">
+                    {filtrados.length>0&&<div style={{padding:"6px 14px",fontSize:11,color:C.muted,borderBottom:`1px solid ${C.border}`}}>{filtrados.length} producto{filtrados.length!==1?"s":""} · ↑↓ para moverte, Enter para elegir</div>}
+                    {filtrados.map((p,i)=>(
+                      <div key={p.id} data-idx={i} className="fDropItem fDropHover" style={{padding:"10px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",gap:10,background:i===selIdx?"#2d2d2d":"transparent",borderLeft:i===selIdx?`3px solid ${C.accent}`:"3px solid transparent"}}
+                        onPointerDown={e=>e.preventDefault()}
                         onClick={()=>elegirProducto(p)}>
                         <span>{p.nombre}</span><span style={{color:C.accent,fontWeight:800,fontSize:14,whiteSpace:"nowrap"}}>{fmt(p.precio)}</span>
                       </div>
@@ -1407,9 +1613,11 @@ export default function FoodiesApp() {
                   </div>);
                 })()}
               </div>
-              <div style={{...css.col,maxWidth:80}}><div style={css.lbl}>Cant.</div><input style={{...css.input,maxWidth:80}} className="fInput" type="number" min="1" placeholder="1" value={selQty} onChange={e=>setSelQty(e.target.value)}/></div>
-              <div style={{...css.col,maxWidth:150}}><div style={css.lbl}>Precio cobrado</div><input style={{...css.input,maxWidth:150}} className="fInput" type="number" placeholder="Sugerido" value={selPrecio} onChange={e=>setSelPrecio(e.target.value)}/></div>
-              <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn()} className="fBtnInline" onClick={addItem}>+ Agregar</button></div>
+              <div style={{...css.col,maxWidth:80}}><div style={css.lbl}>Cant.</div><input id="nf-qty" style={{...css.input,maxWidth:80}} className="fInput" type="number" inputMode="numeric" enterKeyHint="next" min="1" placeholder="1" value={selQty} onChange={e=>setSelQty(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("nf-precio");}}}/></div>
+              <div style={{...css.col,maxWidth:150}}><div style={css.lbl}>Precio cobrado</div><input id="nf-precio" style={{...css.input,maxWidth:150}} className="fInput" type="number" inputMode="numeric" enterKeyHint="done" placeholder="Sugerido" value={selPrecio} onChange={e=>setSelPrecio(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault(); if(selProd){ addItem(); } irA("nf-prod");}}}/></div>
+              <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn()} className="fBtnInline" onClick={()=>{addItem();}}>+ Agregar</button></div>
             </div>
             {nf.items.length>0&&<>
               <div className="fTableWrap"><table style={css.table}><thead><tr><th style={css.th}>Producto</th><th style={css.th} className="fHideM">Precio</th><th style={css.th}>Cant.</th><th style={css.th}>Subtotal</th><th style={css.th}></th></tr></thead>
@@ -1420,13 +1628,15 @@ export default function FoodiesApp() {
           </div>
           <div style={css.card} className="fCard"><div style={css.cardTitle}>💳 Medios de Pago</div>
             <div style={css.row} className="fRow">
-              <div style={css.col}><div style={css.lbl}>Medio 1</div><select style={css.sel} className="fSel" value={nf.medioPago1} onChange={e=>setNf(p=>({...p,medioPago1:e.target.value}))}>{mediosPago.map(m=><option key={m}>{m}</option>)}</select></div>
+              <div style={css.col}><div style={css.lbl}>Medio 1</div><SelRapido id="nf-medio1" key={`m1-${nfReset}`} opciones={mediosPago} valor={nf.medioPago1} onChange={v=>setNf(p=>({...p,medioPago1:v}))} onEnter={()=>irA("nf-imp1")} placeholder="Efectivo, transferencia..."/></div>
               <div style={{...css.col,maxWidth:160}}>
                 <div style={css.lbl}>Importe 1 {nf.items.length>0&&(!nf.importe1||nf.importe1==="0")&&<span style={{color:C.warn,fontSize:9}}>⚠️ completar</span>}</div>
-                <input style={{...css.input,maxWidth:160,borderColor:nf.items.length>0&&(!nf.importe1||nf.importe1==="0")?C.warn:C.border}} className="fInput" type="number" placeholder="Monto recibido" value={nf.importe1} onChange={e=>setNf(p=>({...p,importe1:e.target.value}))}/>
+                <input id="nf-imp1" style={{...css.input,maxWidth:160,borderColor:nf.items.length>0&&(!nf.importe1||nf.importe1==="0")?C.warn:C.border}} className="fInput" type="number" inputMode="numeric" enterKeyHint="next" placeholder={totalItems?String(totalItems):"Monto recibido"} value={nf.importe1} onChange={e=>setNf(p=>({...p,importe1:e.target.value}))}
+                  onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault(); if(!nf.importe1&&totalItems) setNf(p=>({...p,importe1:String(totalItems)})); irA("nf-medio2");}}}/>
               </div>
-              <div style={css.col}><div style={css.lbl}>Medio 2 (opcional)</div><select style={css.sel} className="fSel" value={nf.medioPago2} onChange={e=>setNf(p=>({...p,medioPago2:e.target.value}))}><option value="">— Ninguno —</option>{mediosPago.map(m=><option key={m}>{m}</option>)}</select></div>
-              {nf.medioPago2&&<div style={{...css.col,maxWidth:160}}><div style={css.lbl}>Importe 2</div><input style={{...css.input,maxWidth:160}} className="fInput" type="number" placeholder="0" value={nf.importe2} onChange={e=>setNf(p=>({...p,importe2:e.target.value}))}/></div>}
+              <div style={css.col}><div style={css.lbl}>Medio 2 (opcional)</div><SelRapido id="nf-medio2" key={`m2-${nfReset}`} opciones={mediosPago} vacio="— Ninguno —" valor={nf.medioPago2} onChange={v=>setNf(p=>({...p,medioPago2:v,importe2:v?p.importe2:""}))} onEnter={v=>irA(v?"nf-imp2":"nf-guardar")} placeholder="— Ninguno —"/></div>
+              {nf.medioPago2&&<div style={{...css.col,maxWidth:160}}><div style={css.lbl}>Importe 2</div><input id="nf-imp2" style={{...css.input,maxWidth:160}} className="fInput" type="number" inputMode="numeric" enterKeyHint="done" placeholder="0" value={nf.importe2} onChange={e=>setNf(p=>({...p,importe2:e.target.value}))}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("nf-guardar");}}}/></div>}
             </div>
             {(nf.medioPago1==="Transferencia"||nf.medioPago2==="Transferencia")&&<div style={{background:"#7c3a0e22",border:`1px solid ${C.warn}44`,borderRadius:8,padding:"10px 14px",fontSize:12,color:C.warn,marginTop:8}}>⚠️ Transferencia pendiente de confirmación</div>}
             {totalItems>0&&<div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:8}}>
@@ -1437,7 +1647,7 @@ export default function FoodiesApp() {
           </div>
           <div style={css.card} className="fCard"><div style={css.cardTitle}>📝 Notas</div>
             <textarea style={{...css.input,width:"100%",minHeight:60,resize:"vertical"}} placeholder="Observaciones..." value={nf.notas} onChange={e=>setNf(p=>({...p,notas:e.target.value}))}/>
-            <div style={{marginTop:14,textAlign:"right"}}><button style={{...css.btn(),padding:"12px 28px",fontSize:14,opacity:(nf.items.length===0)?0.4:1}} className="fBtn" onClick={guardar} disabled={nf.items.length===0}>💾 Guardar Factura</button></div>
+            <div style={{marginTop:14,textAlign:"right"}}><button id="nf-guardar" style={{...css.btn(),padding:"12px 28px",fontSize:14,opacity:(nf.items.length===0)?0.4:1}} className="fBtn" onClick={guardar} disabled={nf.items.length===0}>💾 Guardar Factura (Enter)</button></div>
           </div>
         </>}
 
@@ -1467,6 +1677,7 @@ export default function FoodiesApp() {
                 <td style={css.td}>{f.transferConfirmada===null?"—":f.transferConfirmada?<span style={css.tag(C.success)}>✅</span>:<span style={{...css.tag(C.warn),cursor:"pointer"}} onClick={()=>confirmarTransfer(f.id)}>⏳ Confirmar</span>}</td>
                 <td style={{...css.td,fontWeight:700}}>{fmt(f.total)}</td>
                 <td style={css.td}><div style={{display:"flex",gap:5}}>
+                  <button title="Imprimir factura" style={{...css.btn(),padding:"4px 8px",fontSize:10}} onClick={()=>abrirImprimir(f)}>🖨️</button>
                   {esAdmin&&<button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>abrirEdicion(f)}>✏️</button>}
                   {esAdmin&&<button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarFactura(f.id)}>🗑</button>}
                   <span style={{...css.badge(f.estado),cursor:esAdmin?"pointer":"default",padding:"4px 9px"}} onClick={()=>esAdmin&&setFacturas(prev=>prev.map(x=>x.id===f.id?{...x,estado:x.estado==="pagada"?"pendiente":"pagada"}:x))}>{f.estado==="pagada"?"✅":"⏳"}</span>
@@ -2229,6 +2440,18 @@ Ingresá observación (opcional):`, "");
         </>}
 
         {tab==="config"&&esAdmin&&<>
+          <div style={css.card}><div style={css.cardTitle}>🏪 Datos del local (salen en la factura impresa)</div>
+            <div style={css.row}>
+              <div style={css.col}><div style={css.lbl}>Nombre</div><input style={css.input} value={datosLocal.nombre} onChange={e=>setDatosLocal(p=>({...p,nombre:e.target.value}))}/></div>
+              <div style={{...css.col,flex:2}}><div style={css.lbl}>Dirección</div><input style={css.input} placeholder="Ej: Av. Illia 123, San Luis" value={datosLocal.direccion} onChange={e=>setDatosLocal(p=>({...p,direccion:e.target.value}))}/></div>
+            </div>
+            <div style={css.row}>
+              <div style={css.col}><div style={css.lbl}>Teléfono / WhatsApp</div><input style={css.input} placeholder="Ej: 266 4123456" value={datosLocal.telefono} onChange={e=>setDatosLocal(p=>({...p,telefono:e.target.value}))}/></div>
+              <div style={css.col}><div style={css.lbl}>Instagram</div><input style={css.input} placeholder="Ej: @foodieslk" value={datosLocal.instagram} onChange={e=>setDatosLocal(p=>({...p,instagram:e.target.value}))}/></div>
+              <div style={css.col}><div style={css.lbl}>CUIT (opcional)</div><input style={css.input} value={datosLocal.cuit} onChange={e=>setDatosLocal(p=>({...p,cuit:e.target.value}))}/></div>
+            </div>
+            <div style={{display:"flex",gap:10,alignItems:"center",marginTop:8}}><button style={css.btn()} onClick={guardarDatosLocal}>💾 Guardar datos del local</button>{datosLocalGuardado&&<span style={{color:C.success,fontSize:12,fontWeight:700}}>✓ Guardado</span>}</div>
+          </div>
           {[
             {titulo:"👤 Vendedores",lista:vendedores,setLista:setVendedores,key:"v",tipo:"vendedor"},
             {titulo:"🛵 Cadetes",lista:cadetes,setLista:setCadetes,key:"c",tipo:"cadete"},
