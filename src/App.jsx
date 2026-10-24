@@ -351,6 +351,8 @@ export default function FoodiesApp() {
   const [grConcepto, setGrConcepto] = useState("");
   const [grMonto, setGrMonto] = useState("");
   const [grFiltDesde, setGrFiltDesde] = useState("");
+  const [grFiltTurno, setGrFiltTurno] = useState("ultimo"); // por defecto: solo el último turno con gastos/retiros
+  const [ccVerTodos, setCcVerTodos] = useState(false);     // por defecto: solo los últimos 5 cierres
   const [grFiltHasta, setGrFiltHasta] = useState("");
   // Filtros cierres (CAMBIO 1)
   const [ccFDesde, setCcFDesde] = useState(""); const [ccFHasta, setCcFHasta] = useState("");
@@ -1579,7 +1581,8 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const transfPendFilt = transferPendientes.filter(f=>(!trDesde||f.fecha>=trDesde)&&(!trHasta||f.fecha<=trHasta));
   const transfConfFilt = transferConfirmadas.filter(f=>(!trDesde||f.fecha>=trDesde)&&(!trHasta||f.fecha<=trHasta));
   // Filtros CAMBIO 1 (cierres)
-  const cierresFilt = cierres.filter(c=>(!ccFDesde||c.fecha>=ccFDesde)&&(!ccFHasta||c.fecha<=ccFHasta));
+  const cierresFilt = cierres.filter(c=>(!ccFDesde||c.fecha>=ccFDesde)&&(!ccFHasta||c.fecha<=ccFHasta))
+    .sort((a,b)=>((b.fecha||"")+(b.turno==="Noche"?"2":"1")).localeCompare((a.fecha||"")+(a.turno==="Noche"?"2":"1")));
   // Filtro personal
   const movsVista = movimientosPersonal.filter(m=>(!filtEmp||m.empleadoId===filtEmp)&&(!filtTipoMov||m.tipo===filtTipoMov)&&(!filtMovDesde||m.fecha>=filtMovDesde)&&(!filtMovHasta||m.fecha<=filtMovHasta));
   const pf = productos.filter(p=>p.nombre.toLowerCase().includes(bProd.toLowerCase()));
@@ -2135,20 +2138,53 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <div style={{marginTop:14,textAlign:"right"}}><button style={{...css.btn(),padding:"10px 24px"}} onClick={guardarCierre}>💾 Guardar Cierre</button></div>
             </div>}
           </div>
+          {cierres.length>0&&<div style={css.card}>
+            <div style={css.cardTitle}>📋 Historial de Cierres</div>
+            <div style={{background:"#111",borderRadius:9,padding:10,marginBottom:12}}>
+              <div style={css.row}>
+                <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={ccFDesde} onChange={e=>setCcFDesde(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={ccFHasta} onChange={e=>setCcFHasta(e.target.value)}/></div>
+                <div style={{display:"flex",alignItems:"flex-end",gap:10}}>
+                  <button style={css.btn("neutral")} onClick={()=>{setCcFDesde("");setCcFHasta("");setCcVerTodos(false);}}>✕</button>
+                  <button style={css.btn(ccVerTodos?"primary":"neutral")} onClick={()=>setCcVerTodos(v=>!v)}>{ccVerTodos?"Ver últimos 5":"Ver todos"}</button>
+                  <span style={{fontSize:11,color:C.muted,paddingBottom:2}}>{(ccFDesde||ccFHasta||ccVerTodos)?`${cierresFilt.length} cierre${cierresFilt.length!==1?"s":""}`:`Últimos ${Math.min(5,cierresFilt.length)} de ${cierresFilt.length}`}</span>
+                </div>
+              </div>
+            </div>
+            {cierresFilt.length===0?<p style={{color:C.muted,textAlign:"center",padding:"20px"}}>Sin cierres en el período.</p>:
+            <div style={{overflowX:"auto"}}><table style={css.table}>
+              <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Turno</th><th style={css.th}>Fact.</th><th style={css.th}>Ef. sistema</th><th style={css.th}>Gastos</th><th style={css.th}>Retiros</th><th style={css.th}>Ef. contado</th><th style={css.th}>Diferencia</th><th style={css.th}>Transf. pend.</th><th style={css.th}></th></tr></thead>
+              <tbody>{((ccFDesde||ccFHasta||ccVerTodos)?cierresFilt:cierresFilt.slice(0,5)).map(cierre=><tr key={cierre.id}>
+                <td style={css.td}>{fmtFecha(cierre.fecha)}</td><td style={css.td}>{cierre.turno}</td><td style={css.td}>{cierre.facturas}</td>
+                <td style={css.td}>{fmt(cierre.efectivo)}</td><td style={{...css.td,color:C.danger}}>{fmt(cierre.gastosContado)}</td><td style={{...css.td,color:C.warn}}>{fmt(cierre.retiros||0)}</td><td style={css.td}>{fmt(cierre.efectivoContado)}</td>
+                <td style={css.td}><span style={{fontWeight:800,color:cierre.diferencia===0?C.success:cierre.diferencia>0?C.warn:C.danger}}>{cierre.diferencia===0?"✓":cierre.diferencia>0?`+${fmt(cierre.diferencia)}`:fmt(cierre.diferencia)}</span></td>
+                <td style={{...css.td,color:cierre.transferPendiente>0?C.warn:C.muted}}>{cierre.transferPendiente>0?fmt(cierre.transferPendiente):"—"}</td>
+                <td style={css.td}><div style={{display:"flex",gap:5}}><button style={{...css.btn("neutral"),padding:"4px 8px",fontSize:10}} onClick={()=>generarReporteDia(cierre)}>📄 Reporte</button>{esAdmin&&<button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarCierre(cierre.id)}>🗑</button>}</div></td>
+              </tr>)}</tbody>
+            </table></div>}
+          </div>}
           <div style={css.card}>
             <div style={css.cardTitle}>💸 Historial de Gastos y Retiros</div>
             <div style={{background:"#111",borderRadius:9,padding:10,marginBottom:12}}>
               <div style={css.row}>
-                <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={grFiltDesde} onChange={e=>setGrFiltDesde(e.target.value)}/></div>
-                <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={grFiltHasta} onChange={e=>setGrFiltHasta(e.target.value)}/></div>
-                <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setGrFiltDesde("");setGrFiltHasta("");}}>✕</button></div>
+                <div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} value={grFiltTurno} onChange={e=>setGrFiltTurno(e.target.value)}><option value="ultimo">Último turno</option><option value="todos">Todos</option><option value="Mañana">Mañana</option><option value="Noche">Noche</option></select></div>
+                <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={grFiltDesde} onChange={e=>{setGrFiltDesde(e.target.value); if(grFiltTurno==="ultimo") setGrFiltTurno("todos");}}/></div>
+                <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={grFiltHasta} onChange={e=>{setGrFiltHasta(e.target.value); if(grFiltTurno==="ultimo") setGrFiltTurno("todos");}}/></div>
+                <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setGrFiltDesde("");setGrFiltHasta("");setGrFiltTurno("ultimo");}}>✕</button></div>
               </div>
             </div>
             {(()=>{
-              const grf=gastosRetiros.filter(g=>(!grFiltDesde||g.fecha>=grFiltDesde)&&(!grFiltHasta||g.fecha<=grFiltHasta)).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+              const ordG = g=>(g.fecha||"")+(g.turno==="Noche"?"2":"1");
+              const ultimoT = gastosRetiros.reduce((m,g)=>ordG(g)>m?ordG(g):m,"");
+              const grf=gastosRetiros.filter(g=>grFiltTurno==="ultimo"
+                  ? ordG(g)===ultimoT
+                  : (!grFiltDesde||g.fecha>=grFiltDesde)&&(!grFiltHasta||g.fecha<=grFiltHasta)&&(grFiltTurno==="todos"||g.turno===grFiltTurno))
+                .sort((a,b)=>ordG(b).localeCompare(ordG(a))||(b.hora||"").localeCompare(a.hora||""));
+              const ultG = gastosRetiros.find(g=>ordG(g)===ultimoT);
               const tG=grf.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+g.monto,0);
               const tR=grf.filter(g=>g.tipo==="Retiro").reduce((s,g)=>s+g.monto,0);
-              return grf.length===0?<p style={{color:C.muted,textAlign:"center",padding:"20px"}}>Sin registros en el período.</p>
+              return <>{grFiltTurno==="ultimo"&&ultG&&<div style={{fontSize:12,color:C.muted,marginBottom:8}}>Mostrando el último turno con registros: <b style={{color:C.text}}>{ultG.turno} · {fmtFecha(ultG.fecha)}</b>. Para ver otros, cambiá el filtro.</div>}
+                {grf.length===0?<p style={{color:C.muted,textAlign:"center",padding:"20px"}}>Sin registros en el período.</p>
                 :<><div style={css.grid(140)}>
                   <div style={css.stat}><div style={css.statV()}>{grf.length}</div><div style={css.statL}>Registros</div></div>
                   <div style={css.stat}><div style={css.statV(C.danger)}>{fmt(tG)}</div><div style={css.statL}>Total Gastos</div></div>
@@ -2162,34 +2198,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                     <td style={css.td}>{g.concepto}</td><td style={{...css.td,fontWeight:700}}>{fmt(g.monto)}</td>
                     {esAdmin&&<td style={css.td}><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarGastoRetiro(g.id)}>🗑</button></td>}
                   </tr>)}</tbody>
-                </table></div></>;
+                </table></div></>}</>;
             })()}
           </div>
 
-          {cierres.length>0&&<div style={css.card}>
-            <div style={css.cardTitle}>📋 Historial de Cierres</div>
-            <div style={{background:"#111",borderRadius:9,padding:10,marginBottom:12}}>
-              <div style={css.row}>
-                <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={ccFDesde} onChange={e=>setCcFDesde(e.target.value)}/></div>
-                <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={ccFHasta} onChange={e=>setCcFHasta(e.target.value)}/></div>
-                <div style={{display:"flex",alignItems:"flex-end",gap:10}}>
-                  <button style={css.btn("neutral")} onClick={()=>{setCcFDesde("");setCcFHasta("");}}>✕</button>
-                  <span style={{fontSize:11,color:C.muted,paddingBottom:2}}>{cierresFilt.length} cierre{cierresFilt.length!==1?"s":""}</span>
-                </div>
-              </div>
-            </div>
-            {cierresFilt.length===0?<p style={{color:C.muted,textAlign:"center",padding:"20px"}}>Sin cierres en el período.</p>:
-            <div style={{overflowX:"auto"}}><table style={css.table}>
-              <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Turno</th><th style={css.th}>Fact.</th><th style={css.th}>Ef. sistema</th><th style={css.th}>Gastos</th><th style={css.th}>Retiros</th><th style={css.th}>Ef. contado</th><th style={css.th}>Diferencia</th><th style={css.th}>Transf. pend.</th><th style={css.th}></th></tr></thead>
-              <tbody>{cierresFilt.map(cierre=><tr key={cierre.id}>
-                <td style={css.td}>{fmtFecha(cierre.fecha)}</td><td style={css.td}>{cierre.turno}</td><td style={css.td}>{cierre.facturas}</td>
-                <td style={css.td}>{fmt(cierre.efectivo)}</td><td style={{...css.td,color:C.danger}}>{fmt(cierre.gastosContado)}</td><td style={{...css.td,color:C.warn}}>{fmt(cierre.retiros||0)}</td><td style={css.td}>{fmt(cierre.efectivoContado)}</td>
-                <td style={css.td}><span style={{fontWeight:800,color:cierre.diferencia===0?C.success:cierre.diferencia>0?C.warn:C.danger}}>{cierre.diferencia===0?"✓":cierre.diferencia>0?`+${fmt(cierre.diferencia)}`:fmt(cierre.diferencia)}</span></td>
-                <td style={{...css.td,color:cierre.transferPendiente>0?C.warn:C.muted}}>{cierre.transferPendiente>0?fmt(cierre.transferPendiente):"—"}</td>
-                <td style={css.td}><div style={{display:"flex",gap:5}}><button style={{...css.btn("neutral"),padding:"4px 8px",fontSize:10}} onClick={()=>generarReporteDia(cierre)}>📄 Reporte</button>{esAdmin&&<button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarCierre(cierre.id)}>🗑</button>}</div></td>
-              </tr>)}</tbody>
-            </table></div>}
-          </div>}
         </>}
 
         {/* ══ CUENTA CORRIENTE ══ */}
