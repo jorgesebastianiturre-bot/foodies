@@ -14,6 +14,15 @@ const USUARIOS = {
 };
 
 const DIAS_ALERTA = 30;
+const DIAS = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+const fmtFecha = (fecha) => {
+  if(!fecha) return "—";
+  const d = new Date(fecha+"T12:00:00");
+  const dd = String(d.getDate()).padStart(2,"0");
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const yy = String(d.getFullYear()).slice(2);
+  return `${dd}-${mm}-${yy} ${DIAS[d.getDay()]}`;
+};
 const gid = () => Math.random().toString(36).substr(2,9);
 // Fecha local (Argentina). Antes usaba UTC y después de las 21 hs daba el día siguiente.
 const hoy = () => new Date().toLocaleDateString("en-CA");
@@ -313,11 +322,19 @@ export default function FoodiesApp() {
   const [editSelProd, setEditSelProd] = useState(""); const [editSelQty, setEditSelQty] = useState(""); const [editSelPrecio, setEditSelPrecio] = useState("");
   // Historial filtros (CAMBIO 4)
   const [bFact, setBFact] = useState("");
-  const [hfDesde, setHfDesde] = useState(""); const [hfHasta, setHfHasta] = useState(""); const [hfTurno, setHfTurno] = useState(""); const [hfComanda, setHfComanda] = useState("");
+  // Historial: por defecto muestra solo el turno abierto (o el día de hoy si no hay turno abierto)
+  const [hfDesde, setHfDesde] = useState(()=>leerTurnoGuardado()?.fecha||hoy()); const [hfHasta, setHfHasta] = useState(()=>leerTurnoGuardado()?.fecha||hoy()); const [hfTurno, setHfTurno] = useState(()=>leerTurnoGuardado()?.turno||""); const [hfComanda, setHfComanda] = useState("");
   // Cierres
   const [cierres, setCierres] = useState([]);
   const [cierreFecha, setCierreFecha] = useState(hoy()); const [cierreTurno, setCierreTurno] = useState("Noche");
-  const [cierreEfectivo, setCierreEfectivo] = useState(""); const [cierreGastos, setCierreGastos] = useState(""); const [cierreObs, setCierreObs] = useState("");
+  const [cierreEfectivo, setCierreEfectivo] = useState(""); const [cierreObs, setCierreObs] = useState("");
+  // Gastos y retiros cargados uno por uno durante el turno (restaurado de la versión del 3/9)
+  const [gastosRetiros, setGastosRetiros] = useState([]);
+  const [grTipo, setGrTipo] = useState("Gasto");
+  const [grConcepto, setGrConcepto] = useState("");
+  const [grMonto, setGrMonto] = useState("");
+  const [grFiltDesde, setGrFiltDesde] = useState("");
+  const [grFiltHasta, setGrFiltHasta] = useState("");
   // Filtros cierres (CAMBIO 1)
   const [ccFDesde, setCcFDesde] = useState(""); const [ccFHasta, setCcFHasta] = useState("");
   // Filtros transferencias (CAMBIO 2)
@@ -399,12 +416,21 @@ export default function FoodiesApp() {
       const { data:cierresDb } = await supabase.from("cierres_caja").select("*").order("created_at",{ascending:false});
       if(cierresDb) setCierres(cierresDb.map(c=>({
         id:c.id, fecha:c.fecha, turno:c.turno, facturas:c.facturas_count,
-        efectivo:c.efectivo, transferConfirmada:c.transfer_confirmada,
-        transferPendiente:c.transfer_pendiente, cuentaCorriente:c.cuenta_corriente,
-        efectivoContado:c.efectivo_contado, gastosContado:c.gastos,
-        efectivoEsperado:c.efectivo_esperado, diferencia:c.diferencia, obs:c.obs
+        efectivo:parseFloat(c.efectivo)||0, transferConfirmada:parseFloat(c.transfer_confirmada)||0,
+        transferPendiente:parseFloat(c.transfer_pendiente)||0, cuentaCorriente:parseFloat(c.cuenta_corriente)||0,
+        efectivoContado:parseFloat(c.efectivo_contado)||0, gastosContado:parseFloat(c.gastos)||0, retiros:parseFloat(c.retiros)||0,
+        efectivoEsperado:parseFloat(c.efectivo_esperado)||0, diferencia:parseFloat(c.diferencia)||0, obs:c.obs||"",
+        comandaInicial:c.comanda_inicial||null
       })));
     } catch(e) { console.error("cierres:",e); }
+
+    try {
+      const { data:grDb } = await supabase.from("gastos_retiros").select("*").order("created_at",{ascending:false});
+      if(grDb) setGastosRetiros(grDb.map(g=>({
+        id:g.id, fecha:g.fecha, hora:g.hora||"", turno:g.turno,
+        tipo:g.tipo, concepto:g.concepto, monto:parseFloat(g.monto)||0, cierreId:g.cierre_id
+      })));
+    } catch(e) { console.error("gastos_retiros:",e); }
 
     // Datos del local para la factura impresa (fila "datos_local" en configuracion)
     try {
@@ -718,6 +744,7 @@ export default function FoodiesApp() {
       motivoAutorizacion:motivo, ultimaAnterior:d.ultima?.num??null, diferencia:d.diferencia??null };
     guardarTurno(ta);
     setCierreFecha(d.fecha); setCierreTurno(d.turno);
+    setHfDesde(d.fecha); setHfHasta(d.fecha); setHfTurno(d.turno);
     irA("nf-tipo");
     setTaComanda(""); setTaVendedor("");
     if(motivo!=="normal") {
@@ -943,23 +970,304 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const cierreTrPend = factCierre.filter(f=>tieneTransfer(f)&&f.transferConfirmada===false);
   const cierreTrPendMonto = cierreTrPend.reduce((s,f)=>s+getTransfer(f),0);
   const cierreCC = factCierre.reduce((s,f)=>s+getCC(f),0);
+  // Gastos y retiros del turno actual (aún no vinculados a ningún cierre)
+  const grTurno = gastosRetiros.filter(g=>g.fecha===cierreFecha&&g.turno===cierreTurno&&!g.cierreId);
+  const gastosContado = grTurno.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+g.monto,0);
+  const retirosContado = grTurno.filter(g=>g.tipo==="Retiro").reduce((s,g)=>s+g.monto,0);
   const efectivoContado = parseFloat(cierreEfectivo)||0;
-  const gastosContado = parseFloat(cierreGastos)||0;
-  const efectivoEsperado = cierreEf - gastosContado;
-  const difCaja = efectivoContado - efectivoEsperado;
+  // Fórmula: (Efectivo físico + Gastos + Retiros) vs Ventas en efectivo
+  const efectivoEsperado = efectivoContado + gastosContado + retirosContado;
+  const difCaja = efectivoEsperado - cierreEf;
+
+  const guardarGastoRetiro = async () => {
+    if(!grConcepto||grMonto==="") return;
+    const id = gid();
+    const ahora = new Date();
+    const horaActual = `${String(ahora.getHours()).padStart(2,"0")}:${String(ahora.getMinutes()).padStart(2,"0")}`;
+    const reg = {id,fecha:cierreFecha,hora:horaActual,turno:cierreTurno,tipo:grTipo,concepto:grConcepto,monto:parseFloat(grMonto)||0,cierreId:null};
+    const { error } = await supabase.from("gastos_retiros").insert({id,fecha:cierreFecha,hora:horaActual,turno:cierreTurno,tipo:grTipo,concepto:grConcepto,monto:parseFloat(grMonto)||0});
+    if(error){ alert("No se pudo guardar: "+error.message); return; }
+    setGastosRetiros(prev=>[reg,...prev]);
+    setGrConcepto(""); setGrMonto("");
+  };
+
+  const eliminarGastoRetiro = async (id) => {
+    if(!window.confirm("¿Eliminar este registro?")) return;
+    await supabase.from("gastos_retiros").delete().eq("id",id);
+    setGastosRetiros(prev=>prev.filter(g=>g.id!==id));
+  };
+
+  const generarReporteDia = (cierre) => {
+    const factTurnoTodas = facturas.filter(f=>f.fecha===cierre.fecha&&f.turno===cierre.turno);
+    const factDia = factTurnoTodas.filter(f=>f.estado==="pagada");
+    const trPend = factDia.filter(f=>tieneTransfer(f)&&f.transferConfirmada===false);
+    const grDia = gastosRetiros.filter(g=>g.cierreId===cierre.id);
+    const cantEnvio = factDia.filter(f=>f.tipoVenta==="Envio").length;
+    const cantMostrador = factDia.filter(f=>f.tipoVenta==="Mostrador").length;
+    const cantSalon = factDia.filter(f=>f.tipoVenta==="Salon").length;
+    const prodMap = {};
+    factDia.forEach(f=>(f.items||[]).forEach(it=>{
+      if(it.nombre==="ENVIO") return;
+      if(!prodMap[it.nombre]) prodMap[it.nombre]={qty:0,total:0};
+      prodMap[it.nombre].qty+=it.qty; prodMap[it.nombre].total+=it.qty*it.precio;
+    }));
+    const topProductos = Object.entries(prodMap).sort((a,b)=>b[1].qty-a[1].qty).slice(0,10);
+    const comandasNum = factTurnoTodas.map(f=>f.comanda).filter(x=>x&&x!=="—"&&!isNaN(parseInt(x))).map(x=>parseInt(x));
+    const conteo = {}; comandasNum.forEach(n=>{conteo[n]=(conteo[n]||0)+1;});
+    const nums = Object.keys(conteo).map(Number).sort((a,b)=>a-b);
+    // Usar comanda inicial del turno si está registrada
+    const cmdInicial = cierre.comandaInicial || (nums.length>0?nums[0]:null);
+    const cmdFinal = nums.length>0?nums[nums.length-1]:null;
+
+    // Verificar salto entre turno anterior y este turno
+    const ordT = (c)=>(c.fecha||"")+(c.turno==="Noche"?"2":"1");
+    const cierresOrdenados = cierres.filter(x=>x.id!==cierre.id&&ordT(x)<ordT(cierre)).sort((a,b)=>ordT(b).localeCompare(ordT(a)));
+    const cierreAnterior = cierresOrdenados[0]||null;
+    const ultimaCmdAnterior = cierreAnterior ? facturas
+      .filter(f=>f.fecha===cierreAnterior.fecha&&f.turno===cierreAnterior.turno&&f.comanda&&f.comanda!=="—"&&!isNaN(parseInt(f.comanda)))
+      .reduce((max,f)=>Math.max(max,parseInt(f.comanda)),0)||null : null;
+    const saltoEntreTurnos = (cmdInicial&&ultimaCmdAnterior) ? Math.max(0, cmdInicial - ultimaCmdAnterior - 1) : null;
+
+    const faltantes=[],incompletos=[],saltosGraves=[];
+    if(cmdInicial&&cmdFinal){
+      for(let n=cmdInicial;n<=cmdFinal;n++){
+        const cant=conteo[n]||0;
+        if(cant===0) faltantes.push(n);
+        else if(cant===1) incompletos.push(n);
+      }
+      let inicio=null;
+      for(let n=cmdInicial;n<=cmdFinal;n++){
+        if((conteo[n]||0)===0){if(!inicio)inicio=n;}
+        else{if(inicio&&n-inicio>=3)saltosGraves.push({desde:inicio,hasta:n-1,cant:n-inicio});inicio=null;}
+      }
+      if(inicio&&cmdFinal-inicio>=2)saltosGraves.push({desde:inicio,hasta:cmdFinal,cant:cmdFinal-inicio+1});
+    }
+    const hayProblemas = faltantes.length>0||incompletos.length>0||(saltoEntreTurnos!==null&&saltoEntreTurnos>0);
+    const difTransfer = factDia.filter(f=>{
+      const tr=(f.medioPago1==="Transferencia"?(parseFloat(f.importe1)||0):0)+(f.medioPago2==="Transferencia"?(parseFloat(f.importe2)||0):0);
+      return tr>0&&Math.abs(tr-f.total)>1;
+    }).map(f=>{
+      const tr=(f.medioPago1==="Transferencia"?(parseFloat(f.importe1)||0):0)+(f.medioPago2==="Transferencia"?(parseFloat(f.importe2)||0):0);
+      return {numero:f.numero,comanda:f.comanda,cliente:f.cliente||"—",totalFactura:f.total,transferido:tr,diferencia:tr-f.total};
+    });
+    const sumaDifTransfer = difTransfer.reduce((s,x)=>s+x.diferencia,0);
+    const difPrecios = [];
+    factDia.forEach(f=>(f.items||[]).forEach(it=>{
+      if(it.nombre==="ENVIO") return;
+      const prodActual = productos.find(p=>p.id===it.prodId||p.nombre===it.nombre);
+      if(prodActual&&Math.abs(prodActual.precio-it.precio)>1)
+        difPrecios.push({numero:f.numero,comanda:f.comanda,producto:it.nombre,precioLista:prodActual.precio,precioCobrado:it.precio,qty:it.qty,diferencia:(it.precio-prodActual.precio)*it.qty});
+    }));
+    const cuadraEf = cierre.diferencia===0;
+    const cuadraTransf = cierre.transferPendiente===0;
+    const todoCuadra = cuadraEf&&cuadraTransf;
+    const w = window.open("","_blank","width=850,height=700");
+    if(!w){alert("Permitir ventanas emergentes");return;}
+    let html = "";
+    try {
+    html += "<!DOCTYPE html><html><head><title>Reporte "+cierre.fecha+" - "+cierre.turno+"</title>";
+    html += "<style>body{font-family:Arial,sans-serif;padding:30px;color:#111;max-width:800px;margin:0 auto}";
+    html += "h1{font-size:22px;text-align:center}.sub{text-align:center;font-size:12px;color:#666;margin-bottom:24px}";
+    html += "h2{font-size:14px;margin-top:24px;border-bottom:2px solid #111;padding-bottom:4px}";
+    html += "table{width:100%;border-collapse:collapse;margin-bottom:8px}th,td{border:1px solid #ccc;padding:6px 8px;font-size:12px;text-align:left}th{background:#f0f0f0}";
+    html += ".ok{background:#f0fdf4;border:1px solid #22c55e;border-radius:8px;padding:14px;font-weight:900;color:#166534;text-align:center;font-size:18px}";
+    html += ".danger{background:#fef2f2;border:1px solid #ef4444;border-radius:8px;padding:14px;color:#991b1b}";
+    html += ".resumen{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.box{border:1px solid #ddd;border-radius:6px;padding:10px;text-align:center}";
+    html += ".box .v{font-size:18px;font-weight:800}.box .l{font-size:10px;color:#666;text-transform:uppercase}</style></head><body>";
+    // Calculos para el reporte
+    const totalEfectivo = factDia.reduce((s,f)=>s+getEfectivo(f),0);
+    const totalTransfer = factDia.reduce((s,f)=>s+getTransfer(f),0);
+    const totalCC = factDia.reduce((s,f)=>s+getCC(f),0);
+    const totalVentas = totalEfectivo + totalTransfer + totalCC;
+    const trConf = factDia.filter(f=>tieneTransfer(f)&&f.transferConfirmada===true);
+    const trConfMonto = trConf.reduce((s,f)=>s+montoTransfer(f),0);
+    const trPendMonto = trPend.reduce((s,f)=>s+montoTransfer(f),0);
+    const gastosT = grDia.length>0 ? grDia.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+g.monto,0) : (cierre.gastosContado||0);
+    const retirosT = grDia.length>0 ? grDia.filter(g=>g.tipo==="Retiro").reduce((s,g)=>s+g.monto,0) : (cierre.retiros||0);
+    const sumaFisica = cierre.efectivoContado + gastosT + retirosT;
+    const difEf = sumaFisica - totalEfectivo;
+
+    html += "<h1>FOODIES LK</h1><div class='sub'>Cierre — "+cierre.fecha+" · Turno "+cierre.turno+"</div>";
+
+    // ══ SECCIÓN 1: TOTAL VENTAS DEL TURNO ══
+    html += "<h2>💰 TOTAL VENTAS DEL TURNO</h2>";
+    html += "<table>";
+    html += "<tr style='background:#e8f5e9'><td><b>💵 Efectivo</b></td><td style='text-align:right;font-weight:700'>"+fmt(totalEfectivo)+"</td></tr>";
+    html += "<tr style='background:#e3f2fd'><td><b>📲 Transferencia</b></td><td style='text-align:right;font-weight:700'>"+fmt(totalTransfer)+"</td></tr>";
+    if(totalCC>0) html += "<tr style='background:#ede7f6'><td><b>🏦 Cuenta Corriente</b></td><td style='text-align:right;font-weight:700'>"+fmt(totalCC)+"</td></tr>";
+    html += "<tr style='background:#fff3e0;font-size:16px'><td><b>TOTAL VENDIDO</b></td><td style='text-align:right;font-weight:900'>"+fmt(totalVentas)+"</td></tr>";
+    html += "</table>";
+
+    // ══ SECCIÓN 2: EFECTIVO ══
+    html += "<h2>💵 EFECTIVO</h2>";
+    html += "<table>";
+    html += "<tr><td>Venta en efectivo (sistema)</td><td style='text-align:right;font-weight:700'>"+fmt(totalEfectivo)+"</td></tr>";
+    html += "<tr style='border-top:2px solid #ddd'><td>Efectivo físico contado</td><td style='text-align:right;font-weight:700'>"+fmt(cierre.efectivoContado)+"</td></tr>";
+    if(gastosT>0) html += "<tr><td>&nbsp;&nbsp;+ Gastos del turno</td><td style='text-align:right;color:#dc2626'>"+fmt(gastosT)+"</td></tr>";
+    if(retirosT>0) html += "<tr><td>&nbsp;&nbsp;+ Retiros del turno</td><td style='text-align:right;color:#f59e0b'>"+fmt(retirosT)+"</td></tr>";
+    html += "<tr style='background:#e8f5e9'><td><b>Suma (físico + gastos + retiros)</b></td><td style='text-align:right;font-weight:700'>"+fmt(sumaFisica)+"</td></tr>";
+    const colorDifEf = difEf===0?"#16a34a":difEf>0?"#16a34a":"#dc2626";
+    html += "<tr style='border-top:2px solid #111;font-weight:900'><td>DIFERENCIA</td><td style='text-align:right;color:"+colorDifEf+"'>"+(difEf===0?"✓ CUADRA":(difEf>0?"+"+fmt(difEf)+" (SOBRA)":fmt(difEf)+" (FALTA)"))+"</td></tr>";
+    html += "</table>";
+    if(grDia.length>0){
+      html += "<p style='font-size:11px;color:#666;margin-top:4px'><b>Detalle gastos/retiros:</b> ";
+      grDia.forEach(g=>{html += g.hora+" "+g.tipo+": "+g.concepto+" "+fmt(g.monto)+" · ";});
+      html += "</p>";
+    }
+
+    // ══ SECCIÓN 3: TRANSFERENCIAS ══
+    html += "<h2>📲 TRANSFERENCIAS</h2>";
+    html += "<table>";
+    html += "<tr><td>Total transferencias del turno</td><td style='text-align:right;font-weight:700'>"+fmt(totalTransfer)+"</td></tr>";
+    html += "<tr style='color:#16a34a'><td>&nbsp;&nbsp;✅ Confirmadas ("+trConf.length+")</td><td style='text-align:right;font-weight:700'>"+fmt(trConfMonto)+"</td></tr>";
+    html += "<tr style='color:#dc2626'><td>&nbsp;&nbsp;⏳ Pendientes ("+trPend.length+")</td><td style='text-align:right;font-weight:700'>"+fmt(trPendMonto)+"</td></tr>";
+    html += "</table>";
+    if(trPend.length>0){
+      html += "<p style='font-weight:700;color:#dc2626;margin-top:8px'>⚠️ Transferencias pendientes de confirmar:</p>";
+      html += "<table><thead><tr><th>N° Fact.</th><th>Comanda</th><th>Cliente</th><th>Vendedor</th><th>Monto</th></tr></thead><tbody>";
+      trPend.forEach(f=>{
+        html += "<tr style='background:#fef2f2'>";
+        html += "<td>#"+f.numero+"</td>";
+        html += "<td>"+(f.comanda!=="—"?"#"+f.comanda:"—")+"</td>";
+        html += "<td>"+(f.cliente||"—")+"</td>";
+        html += "<td>"+f.vendedor+"</td>";
+        html += "<td style='text-align:right;font-weight:700;color:#dc2626'>"+fmt(montoTransfer(f))+"</td>";
+        html += "</tr>";
+      });
+      html += "</tbody></table>";
+    }
+
+    // ══ SECCIÓN 4: CUENTA CORRIENTE (si aplica) ══
+    if(totalCC>0){
+      const facturasCC = factDia.filter(f=>(f.medioPago1==="Cuenta Corriente"||(f.medioPago2==="Cuenta Corriente"&&f.importe2>0)));
+      html += "<h2>🏦 CUENTA CORRIENTE</h2>";
+      html += "<table>";
+      html += "<tr><td>Total en Cuenta Corriente</td><td style='text-align:right;font-weight:700'>"+fmt(totalCC)+"</td></tr>";
+      html += "</table>";
+      html += "<table><thead><tr><th>N° Fact.</th><th>Comanda</th><th>Cliente</th><th>Monto CC</th></tr></thead><tbody>";
+      facturasCC.forEach(f=>{
+        const montoCC=getCC(f);
+        html += "<tr><td>#"+f.numero+"</td><td>"+(f.comanda!=="—"?"#"+f.comanda:"—")+"</td><td>"+(f.cliente||"—")+"</td><td style='text-align:right;font-weight:700'>"+fmt(montoCC)+"</td></tr>";
+      });
+      html += "</tbody></table>";
+    }
+    if(difTransfer.length>0){
+      html += "<h2 style='color:"+(sumaDifTransfer>=0?"#16a34a":"#dc2626")+"'>📲 Diferencias en Transferencias</h2>";
+      html += "<table><thead><tr><th>N°</th><th>Comanda</th><th>Cliente</th><th>Total comanda</th><th>Transfirió</th><th>Diferencia</th></tr></thead><tbody>";
+      difTransfer.forEach(x=>{ html += "<tr><td>#"+x.numero+"</td><td>"+(x.comanda!=="—"?"#"+x.comanda:"—")+"</td><td>"+x.cliente+"</td><td>"+fmt(x.totalFactura)+"</td><td>"+fmt(x.transferido)+"</td><td style='font-weight:700;color:"+(x.diferencia>0?"#16a34a":"#dc2626")+"'>"+(x.diferencia>0?"+":"")+fmt(x.diferencia)+"</td></tr>"; });
+      html += "</tbody><tfoot><tr style='border-top:2px solid #111;font-weight:bold'><td colspan='5'>DIFERENCIA NETA</td><td style='color:"+(sumaDifTransfer>=0?"#16a34a":"#dc2626")+"'>"+(sumaDifTransfer>0?"+":"")+fmt(sumaDifTransfer)+"</td></tr></tfoot></table>";
+    }
+    if(difPrecios.length>0){
+      html += "<h2 style='color:#92400e'>💰 Modificaciones de Precio</h2>";
+      html += "<table><thead><tr><th>N°</th><th>Comanda</th><th>Producto</th><th>Lista</th><th>Cobrado</th><th>Cant.</th><th>Diferencia</th></tr></thead><tbody>";
+      difPrecios.forEach(x=>{ html += "<tr><td>#"+x.numero+"</td><td>"+(x.comanda!=="—"?"#"+x.comanda:"—")+"</td><td>"+x.producto+"</td><td>"+fmt(x.precioLista)+"</td><td style='font-weight:700'>"+fmt(x.precioCobrado)+"</td><td>"+x.qty+"</td><td style='font-weight:700;color:"+(x.diferencia>0?"#16a34a":"#dc2626")+"'>"+(x.diferencia>0?"+":"")+fmt(x.diferencia)+"</td></tr>"; });
+      const tdif = difPrecios.reduce((s,x)=>s+x.diferencia,0);
+      html += "</tbody><tfoot><tr style='border-top:2px solid #111;font-weight:bold'><td colspan='6'>IMPACTO TOTAL</td><td style='color:"+(tdif>=0?"#16a34a":"#dc2626")+"'>"+(tdif>0?"+":"")+fmt(tdif)+"</td></tr></tfoot></table>";
+    }
+    html += "<h2>🔢 CORRELATIVIDAD DE COMANDAS</h2>";
+    if(!cmdInicial||!cmdFinal) {
+      html += "<div style='background:#fef9c3;border:1px solid #eab308;border-radius:8px;padding:12px;color:#854d0e'>";
+      html += "<b>⚠️ No se registró comanda inicial al abrir el turno.</b><br>";
+      html += "<span style='font-size:12px'>Sin ese dato no se puede verificar si faltan comandas. Registrar la comanda inicial es OBLIGATORIO al iniciar cada turno.</span>";
+      html += "</div>";
+    } else {
+      const totalRango = cmdFinal - cmdInicial + 1;
+      html += "<div style='background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:10px'>";
+      html += "<table style='border:none'>";
+      if(ultimaCmdAnterior) html += "<tr><td style='border:none;color:#555'>Última comanda turno anterior</td><td style='border:none;font-weight:700'>#"+ultimaCmdAnterior+" ("+cierreAnterior.fecha+" "+cierreAnterior.turno+")</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Comanda inicial de este turno</td><td style='border:none;font-weight:700'>#"+cmdInicial+"</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Última comanda de este turno</td><td style='border:none;font-weight:700'>#"+cmdFinal+"</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Total comandas en rango</td><td style='border:none;font-weight:700'>"+totalRango+"</td></tr>";
+      html += "<tr><td style='border:none;color:#555'>Comandas registradas</td><td style='border:none;font-weight:700'>"+nums.length+"</td></tr>";
+      if(saltoEntreTurnos!==null) html += "<tr style='background:"+(saltoEntreTurnos===0?"#f0fdf4":"#fef2f2")+"'><td style='border:none;font-weight:700'>Salto entre turnos</td><td style='border:none;font-weight:700;color:"+(saltoEntreTurnos===0?"#16a34a":"#dc2626")+"'>"+( saltoEntreTurnos===0?"✅ Ninguno":"⚠️ "+saltoEntreTurnos+" comanda(s) sin registrar entre turnos")+"</td></tr>";
+      html += "</table></div>";
+
+      if(!hayProblemas) {
+        html += "<div style='background:#f0fdf4;border:2px solid #22c55e;border-radius:8px;padding:16px;text-align:center'>";
+        html += "<div style='font-size:22px'>✅</div>";
+        html += "<div style='font-weight:900;color:#166534;font-size:16px'>CORRELATIVIDAD CONFIRMADA</div>";
+        html += "<div style='color:#15803d;font-size:12px;margin-top:4px'>Todas las comandas del #"+cmdInicial+" al #"+cmdFinal+" están registradas correctamente.</div>";
+        html += "</div>";
+      } else {
+        html += "<div style='background:#fef2f2;border:2px solid #ef4444;border-radius:8px;padding:14px;margin-bottom:12px'>";
+        html += "<div style='font-size:18px;font-weight:900;color:#991b1b;margin-bottom:8px'>🚨 ALERTA: SE DETECTARON IRREGULARIDADES</div>";
+
+        if(saltoEntreTurnos>0) {
+          html += "<div style='background:#7f1d1d;color:#fecaca;border-radius:6px;padding:10px;margin-bottom:10px'>";
+          html += "<b>🔴 SALTO ENTRE TURNOS:</b><br>";
+          html += "La última comanda del turno anterior fue #"+ultimaCmdAnterior+" y este turno arrancó en #"+cmdInicial+".<br>";
+          html += "Hay <b>"+saltoEntreTurnos+" comanda(s)</b> que no están registradas en ningún turno.<br>";
+          html += "</div>";
+        }
+
+        if(saltosGraves.length>0) {
+          html += "<div style='background:#7f1d1d;color:#fecaca;border-radius:6px;padding:10px;margin-bottom:10px'>";
+          html += "<b>🔴 SALTOS GRAVES (más de 2 comandas seguidas sin registrar):</b><br>";
+          saltosGraves.forEach(s=>{
+            html += "• Del #"+s.desde+" al #"+s.hasta+" — "+s.cant+" comandas DESAPARECIDAS<br>";
+          });
+          html += "</div>";
+        }
+
+        if(faltantes.length>0) {
+          html += "<div style='margin-bottom:10px'>";
+          html += "<b style='color:#991b1b'>❌ Comandas que NO aparecen en el sistema ("+faltantes.length+"):</b><br>";
+          html += "<div style='font-family:monospace;margin-top:4px;font-size:13px'>"+faltantes.map(n=>"#"+n).join(" · ")+"</div>";
+          html += "</div>";
+        }
+
+        if(incompletos.length>0) {
+          html += "<div style='margin-bottom:6px'>";
+          html += "<b style='color:#9a3412'>⚠️ Comandas que aparecen solo 1 vez ("+incompletos.length+") — deberían aparecer en ambos turnos:</b><br>";
+          html += "<div style='font-family:monospace;margin-top:4px;font-size:13px'>"+incompletos.map(n=>"#"+n).join(" · ")+"</div>";
+          html += "</div>";
+        }
+
+        html += "<div style='margin-top:10px;padding-top:10px;border-top:1px solid #fca5a5;font-size:12px;color:#7f1d1d'>";
+        html += "<b>RESUMEN:</b> De "+totalRango+" comandas esperadas, "+faltantes.length+" no están en el sistema";
+        if(incompletos.length>0) html += " y "+incompletos.length+" aparecen incompletas";
+        html += ". Verificar con el personal del turno.";
+        html += "</div>";
+        html += "</div>";
+      }
+    }
+    html += "<h2>🛒 Top 10 Artículos</h2>";
+    if(topProductos.length===0) html += "<p style='color:#666'>Sin datos</p>";
+    else { html += "<table><thead><tr><th>Producto</th><th>Cantidad</th><th>Total</th></tr></thead><tbody>"; topProductos.forEach(([nombre,d])=>{html += "<tr><td>"+nombre+"</td><td style='text-align:right'>"+d.qty+"</td><td style='text-align:right'>"+fmt(d.total)+"</td></tr>";}); html += "</tbody></table>"; }
+    html += "<h2>📦 Pedidos por Canal</h2>";
+    html += "<div class='resumen'><div class='box'><div class='v'>"+cantEnvio+"</div><div class='l'>🛵 Envío</div></div>";
+    html += "<div class='box'><div class='v'>"+cantMostrador+"</div><div class='l'>🏪 Mostrador</div></div>";
+    html += "<div class='box'><div class='v'>"+cantSalon+"</div><div class='l'>🍽 Salón</div></div></div>";
+    if(cierre.obs) html += "<p style='margin-top:14px;font-size:12px;color:#92400e'><b>Obs:</b> "+cierre.obs+"</p>";
+    html += "</body></html>";
+    } catch(err) {
+      html = "<!DOCTYPE html><html><body style='font-family:Arial;padding:30px;color:red'>";
+      html += "<h2>Error generando el reporte</h2><pre>"+String(err)+"</pre></body></html>";
+    }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+  };
 
   const guardarCierre = async () => {
     const id = gid();
+    const esTurnoAbierto = turnoActivo&&turnoActivo.fecha===cierreFecha&&turnoActivo.turno===cierreTurno;
+    const comandaInicial = esTurnoAbierto ? turnoActivo.comandaInicial : null;
     const c = {id,fecha:cierreFecha,turno:cierreTurno,facturas:factCierre.length,
       efectivo:cierreEf,transferConfirmada:cierreTrConf,transferPendiente:cierreTrPendMonto,
-      cuentaCorriente:cierreCC,efectivoContado,gastosContado,efectivoEsperado,diferencia:difCaja,obs:cierreObs};
-    await supabase.from("cierres_caja").insert({id,fecha:cierreFecha,turno:cierreTurno,facturas_count:factCierre.length,
+      cuentaCorriente:cierreCC,efectivoContado,gastosContado,retiros:retirosContado,efectivoEsperado,diferencia:difCaja,obs:cierreObs,comandaInicial};
+    if(grTurno.length>0){
+      await supabase.from("gastos_retiros").update({cierre_id:id}).in("id",grTurno.map(g=>g.id));
+      setGastosRetiros(prev=>prev.map(g=>grTurno.find(x=>x.id===g.id)?{...g,cierreId:id}:g));
+    }
+    const { error } = await supabase.from("cierres_caja").insert({id,fecha:cierreFecha,turno:cierreTurno,facturas_count:factCierre.length,
       efectivo:cierreEf,transfer_confirmada:cierreTrConf,transfer_pendiente:cierreTrPendMonto,cuenta_corriente:cierreCC,
-      efectivo_contado:efectivoContado,gastos:gastosContado,efectivo_esperado:efectivoEsperado,diferencia:difCaja,obs:cierreObs,
-      comanda_inicial:(turnoActivo&&turnoActivo.fecha===cierreFecha&&turnoActivo.turno===cierreTurno)?turnoActivo.comandaInicial:null});
-    setCierres(prev=>[c,...prev]); setCierreEfectivo(""); setCierreGastos(""); setCierreObs("");
+      efectivo_contado:efectivoContado,gastos:gastosContado,retiros:retirosContado,efectivo_esperado:efectivoEsperado,diferencia:difCaja,obs:cierreObs,
+      comanda_inicial:comandaInicial});
+    if(error){ alert("No se pudo guardar el cierre: "+error.message); return; }
+    setCierres(prev=>[c,...prev]); setCierreEfectivo(""); setCierreObs("");
     // Si se cerró la caja del turno abierto, el turno se cierra solo
-    if(turnoActivo&&turnoActivo.fecha===cierreFecha&&turnoActivo.turno===cierreTurno) {
+    if(esTurnoAbierto) {
       guardarTurno(null);
       alert("✅ Cierre guardado. El turno quedó cerrado.");
     }
@@ -1667,9 +1975,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={hfDesde} onChange={e=>setHfDesde(e.target.value)}/></div>
               <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={hfHasta} onChange={e=>setHfHasta(e.target.value)}/></div>
               <div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} value={hfTurno} onChange={e=>setHfTurno(e.target.value)}><option value="">— Todos —</option><option>Mañana</option><option>Noche</option></select></div>
-              <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setBFact("");setHfComanda("");setHfDesde("");setHfHasta("");setHfTurno("");}}>✕ Limpiar</button></div>
+              <div style={{display:"flex",alignItems:"flex-end",gap:6,flexWrap:"wrap"}}>
+                {turnoActivo&&<button style={css.btn()} onClick={()=>{setBFact("");setHfComanda("");setHfDesde(turnoActivo.fecha);setHfHasta(turnoActivo.fecha);setHfTurno(turnoActivo.turno);}}>🟢 Turno actual</button>}
+                <button style={css.btn("neutral")} onClick={()=>{setBFact("");setHfComanda("");setHfDesde("");setHfHasta("");setHfTurno("");}}>Ver todas</button>
+              </div>
             </div>
-            <div style={{fontSize:11,color:C.muted,marginTop:4}}>{ff.length} resultado{ff.length!==1?"s":""}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:4}}>{ff.length} resultado{ff.length!==1?"s":""} · Mostrando: <b style={{color:C.text}}>{(!hfDesde&&!hfHasta&&!hfTurno)?"todas las facturas":`${hfTurno?"turno "+hfTurno+" · ":""}${hfDesde===hfHasta?fmtFecha(hfDesde):(fmtFecha(hfDesde)+" a "+fmtFecha(hfHasta))}`}</b></div>
           </div>
           {ff.length===0?<p style={{color:C.muted,textAlign:"center",padding:"36px 0"}}>Sin resultados.</p>:
             <div style={{overflowX:"auto"}} className="fTableWrap"><table style={css.table}>
@@ -1746,28 +2057,90 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                   <tbody>{cierreTrPend.map(f=><tr key={f.id}><td style={{...css.td,color:C.accent,fontWeight:700}}>{f.numero}</td><td style={{...css.td,fontWeight:800}}>{f.comanda!=="—"?`#${f.comanda}`:"—"}</td><td style={css.td}>{f.vendedor}</td><td style={{...css.td,color:C.warn,fontWeight:700}}>{fmt(montoTransfer(f))}</td><td style={css.td}><button style={{...css.btn("success"),padding:"4px 10px",fontSize:11}} onClick={()=>confirmarTransfer(f.id)}>✅</button></td></tr>)}</tbody>
                 </table></>}
             </div>
+            {/* GASTOS Y RETIROS DEL TURNO */}
+            <div style={{background:"#111",borderRadius:10,padding:14,marginBottom:14}}>
+              <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>💸 Gastos y Retiros del turno</div>
+              <div style={css.row}>
+                <div style={css.col}><div style={css.lbl}>Tipo</div>
+                  <select style={css.sel} value={grTipo} onChange={e=>setGrTipo(e.target.value)}>
+                    <option>Gasto</option><option>Retiro</option>
+                  </select>
+                </div>
+                <div style={{flex:2}}><div style={css.lbl}>Concepto</div><input style={css.input} placeholder="Ej: compra de hielo, pago de envío..." value={grConcepto} onChange={e=>setGrConcepto(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Monto ($)</div><input style={css.input} type="number" placeholder="0" value={grMonto} onChange={e=>setGrMonto(e.target.value)}/></div>
+                <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn()} onClick={guardarGastoRetiro}>+ Agregar</button></div>
+              </div>
+              {grTurno.length>0&&<div style={{marginTop:12}}>
+                <table style={css.table}>
+                  <thead><tr><th style={css.th}>Hora</th><th style={css.th}>Tipo</th><th style={css.th}>Concepto</th><th style={css.th}>Monto</th><th style={css.th}></th></tr></thead>
+                  <tbody>{grTurno.map(g=><tr key={g.id}>
+                    <td style={css.td}>{g.hora}</td>
+                    <td style={css.td}><span style={css.tag(g.tipo==="Gasto"?C.danger:C.warn)}>{g.tipo}</span></td>
+                    <td style={css.td}>{g.concepto}</td>
+                    <td style={{...css.td,fontWeight:700}}>{fmt(g.monto)}</td>
+                    <td style={css.td}><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarGastoRetiro(g.id)}>🗑</button></td>
+                  </tr>)}</tbody>
+                </table>
+                <div style={{textAlign:"right",marginTop:8,fontSize:12,color:C.muted}}>
+                  Gastos: {fmt(gastosContado)} · Retiros: {fmt(retirosContado)}
+                </div>
+              </div>}
+            </div>
+            {/* EFECTIVO CONTADO */}
             <div style={{background:"#111",borderRadius:10,padding:14,marginBottom:14}}>
               <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🖐 Lo que contás</div>
               <div style={css.row}>
-                <div style={css.col}><div style={css.lbl}>Efectivo contado ($)</div><input style={{...css.input,fontSize:16,fontWeight:700}} type="number" placeholder="0" value={cierreEfectivo} onChange={e=>setCierreEfectivo(e.target.value)}/></div>
-                <div style={css.col}><div style={css.lbl}>Gastos del turno ($)</div><input style={css.input} type="number" placeholder="0" value={cierreGastos} onChange={e=>setCierreGastos(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Efectivo físico contado ($)</div><input style={{...css.input,fontSize:16,fontWeight:700}} type="number" placeholder="0" value={cierreEfectivo} onChange={e=>setCierreEfectivo(e.target.value)}/></div>
                 <div style={{flex:2}}><div style={css.lbl}>Observaciones</div><input style={css.input} placeholder="Ej: faltaban $500..." value={cierreObs} onChange={e=>setCierreObs(e.target.value)}/></div>
               </div>
             </div>
             {cierreEfectivo!==""&&<div style={{...css.card,border:`2px solid ${difCaja===0?C.success:difCaja>0?C.warn:C.danger}`,marginBottom:14}}>
+              <div style={{fontSize:11,color:C.muted,marginBottom:10}}>(Efectivo físico + Gastos + Retiros) vs Ventas en efectivo</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
-                <div><div style={css.lbl}>Ef. sistema</div><div style={{fontSize:18,fontWeight:700}}>{fmt(cierreEf)}</div></div>
-                <div><div style={css.lbl}>Menos gastos</div><div style={{fontSize:18,fontWeight:700,color:C.danger}}>- {fmt(gastosContado)}</div></div>
-                <div><div style={css.lbl}>Ef. esperado</div><div style={{fontSize:18,fontWeight:700}}>{fmt(efectivoEsperado)}</div></div>
                 <div><div style={css.lbl}>Ef. contado</div><div style={{fontSize:18,fontWeight:700}}>{fmt(efectivoContado)}</div></div>
+                <div><div style={css.lbl}>+ Gastos</div><div style={{fontSize:18,fontWeight:700,color:C.danger}}>+ {fmt(gastosContado)}</div></div>
+                <div><div style={css.lbl}>+ Retiros</div><div style={{fontSize:18,fontWeight:700,color:C.warn}}>+ {fmt(retirosContado)}</div></div>
+                <div><div style={css.lbl}>= Total calculado</div><div style={{fontSize:18,fontWeight:800,color:C.info}}>{fmt(efectivoEsperado)}</div></div>
+                <div><div style={css.lbl}>Ventas en efectivo</div><div style={{fontSize:18,fontWeight:700}}>{fmt(cierreEf)}</div></div>
                 <div style={{background:difCaja===0?"#14532d":difCaja>0?"#713f12":"#7f1d1d",borderRadius:10,padding:"10px 14px"}}>
                   <div style={css.lbl}>DIFERENCIA</div>
-                  <div style={{fontSize:22,fontWeight:800,color:difCaja===0?C.success:difCaja>0?C.warn:C.danger}}>{difCaja===0?"✓ Cuadra":difCaja>0?`+${fmt(difCaja)}`:fmt(difCaja)}</div>
+                  <div style={{fontSize:22,fontWeight:800,color:difCaja===0?C.success:difCaja>0?C.warn:C.danger}}>{difCaja===0?"✓ Cuadra":difCaja>0?`+${fmt(difCaja)} sobra`:`${fmt(difCaja)} falta`}</div>
                 </div>
               </div>
               <div style={{marginTop:14,textAlign:"right"}}><button style={{...css.btn(),padding:"10px 24px"}} onClick={guardarCierre}>💾 Guardar Cierre</button></div>
             </div>}
           </div>
+          <div style={css.card}>
+            <div style={css.cardTitle}>💸 Historial de Gastos y Retiros</div>
+            <div style={{background:"#111",borderRadius:9,padding:10,marginBottom:12}}>
+              <div style={css.row}>
+                <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={grFiltDesde} onChange={e=>setGrFiltDesde(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={grFiltHasta} onChange={e=>setGrFiltHasta(e.target.value)}/></div>
+                <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setGrFiltDesde("");setGrFiltHasta("");}}>✕</button></div>
+              </div>
+            </div>
+            {(()=>{
+              const grf=gastosRetiros.filter(g=>(!grFiltDesde||g.fecha>=grFiltDesde)&&(!grFiltHasta||g.fecha<=grFiltHasta)).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+              const tG=grf.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+g.monto,0);
+              const tR=grf.filter(g=>g.tipo==="Retiro").reduce((s,g)=>s+g.monto,0);
+              return grf.length===0?<p style={{color:C.muted,textAlign:"center",padding:"20px"}}>Sin registros en el período.</p>
+                :<><div style={css.grid(140)}>
+                  <div style={css.stat}><div style={css.statV()}>{grf.length}</div><div style={css.statL}>Registros</div></div>
+                  <div style={css.stat}><div style={css.statV(C.danger)}>{fmt(tG)}</div><div style={css.statL}>Total Gastos</div></div>
+                  <div style={css.stat}><div style={css.statV(C.warn)}>{fmt(tR)}</div><div style={css.statL}>Total Retiros</div></div>
+                </div>
+                <div style={{overflowX:"auto",marginTop:12}}><table style={css.table}>
+                  <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Hora</th><th style={css.th}>Turno</th><th style={css.th}>Tipo</th><th style={css.th}>Concepto</th><th style={css.th}>Monto</th>{esAdmin&&<th style={css.th}></th>}</tr></thead>
+                  <tbody>{grf.map(g=><tr key={g.id}>
+                    <td style={css.td}>{fmtFecha(g.fecha)}</td><td style={css.td}>{g.hora}</td><td style={css.td}><span style={css.tag(C.info)}>{g.turno}</span></td>
+                    <td style={css.td}><span style={css.tag(g.tipo==="Gasto"?C.danger:C.warn)}>{g.tipo}</span></td>
+                    <td style={css.td}>{g.concepto}</td><td style={{...css.td,fontWeight:700}}>{fmt(g.monto)}</td>
+                    {esAdmin&&<td style={css.td}><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarGastoRetiro(g.id)}>🗑</button></td>}
+                  </tr>)}</tbody>
+                </table></div></>;
+            })()}
+          </div>
+
           {cierres.length>0&&<div style={css.card}>
             <div style={css.cardTitle}>📋 Historial de Cierres</div>
             <div style={{background:"#111",borderRadius:9,padding:10,marginBottom:12}}>
@@ -1782,13 +2155,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             </div>
             {cierresFilt.length===0?<p style={{color:C.muted,textAlign:"center",padding:"20px"}}>Sin cierres en el período.</p>:
             <div style={{overflowX:"auto"}}><table style={css.table}>
-              <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Turno</th><th style={css.th}>Fact.</th><th style={css.th}>Ef. sistema</th><th style={css.th}>Gastos</th><th style={css.th}>Ef. contado</th><th style={css.th}>Diferencia</th><th style={css.th}>Deuda Transf.</th>{esAdmin&&<th style={css.th}></th>}</tr></thead>
-              <tbody>{cierresFilt.map(c=><tr key={c.id}>
-                <td style={css.td}>{c.fecha}</td><td style={css.td}>{c.turno}</td><td style={css.td}>{c.facturas}</td>
-                <td style={css.td}>{fmt(c.efectivo)}</td><td style={{...css.td,color:C.danger}}>{fmt(c.gastosContado)}</td><td style={css.td}>{fmt(c.efectivoContado)}</td>
-                <td style={css.td}><span style={{fontWeight:800,color:c.diferencia===0?C.success:c.diferencia>0?C.warn:C.danger}}>{c.diferencia===0?"✓":c.diferencia>0?`+${fmt(c.diferencia)}`:fmt(c.diferencia)}</span></td>
-                <td style={{...css.td,color:c.transferPendiente>0?C.warn:C.muted}}>{c.transferPendiente>0?fmt(c.transferPendiente):"—"}</td>
-                {esAdmin&&<td style={css.td}><button style={{...css.btn("danger"),padding:"3px 7px",fontSize:10}} onClick={()=>eliminarCierre(c.id)}>🗑</button></td>}
+              <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Turno</th><th style={css.th}>Fact.</th><th style={css.th}>Ef. sistema</th><th style={css.th}>Gastos</th><th style={css.th}>Retiros</th><th style={css.th}>Ef. contado</th><th style={css.th}>Diferencia</th><th style={css.th}>Transf. pend.</th><th style={css.th}></th></tr></thead>
+              <tbody>{cierresFilt.map(cierre=><tr key={cierre.id}>
+                <td style={css.td}>{fmtFecha(cierre.fecha)}</td><td style={css.td}>{cierre.turno}</td><td style={css.td}>{cierre.facturas}</td>
+                <td style={css.td}>{fmt(cierre.efectivo)}</td><td style={{...css.td,color:C.danger}}>{fmt(cierre.gastosContado)}</td><td style={{...css.td,color:C.warn}}>{fmt(cierre.retiros||0)}</td><td style={css.td}>{fmt(cierre.efectivoContado)}</td>
+                <td style={css.td}><span style={{fontWeight:800,color:cierre.diferencia===0?C.success:cierre.diferencia>0?C.warn:C.danger}}>{cierre.diferencia===0?"✓":cierre.diferencia>0?`+${fmt(cierre.diferencia)}`:fmt(cierre.diferencia)}</span></td>
+                <td style={{...css.td,color:cierre.transferPendiente>0?C.warn:C.muted}}>{cierre.transferPendiente>0?fmt(cierre.transferPendiente):"—"}</td>
+                <td style={css.td}><div style={{display:"flex",gap:5}}><button style={{...css.btn("neutral"),padding:"4px 8px",fontSize:10}} onClick={()=>generarReporteDia(cierre)}>📄 Reporte</button>{esAdmin&&<button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarCierre(cierre.id)}>🗑</button>}</div></td>
               </tr>)}</tbody>
             </table></div>}
           </div>}
