@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { LOGO_FOODIES } from "./logoFoodies.js";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -570,8 +571,7 @@ export default function FoodiesApp() {
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Sora',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap')`}</style>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:40,width:"min(90vw,360px)",textAlign:"center"}}>
-        <div style={{fontSize:40,marginBottom:8}}>🍔</div>
-        <div style={{fontSize:24,fontWeight:800,color:C.accent,marginBottom:4}}>Foodies</div>
+        <img src={LOGO_FOODIES} alt="Foodies LK" style={{width:140,height:140,borderRadius:20,display:"block",margin:"0 auto 10px"}}/>
         <div style={{fontSize:12,color:C.muted,marginBottom:28,letterSpacing:"2px",textTransform:"uppercase"}}>Sistema de Gestión</div>
         <div style={{textAlign:"left",marginBottom:12}}>
           <div style={{fontSize:11,color:C.muted,marginBottom:4}}>Usuario</div>
@@ -768,40 +768,44 @@ export default function FoodiesApp() {
     const fechaTxt = f.fecha ? f.fecha.split("-").reverse().join("/") : "";
     const pagos = [ [f.medioPago1, f.importe1], [f.medioPago2, f.importe2] ].filter(([m])=>m);
     const filas = (f.items||[]).map(i=>`<tr><td class="c">${esc(i.qty)}</td><td>${esc(i.nombre)}</td><td class="r">${esc(fmt(i.precio))}</td><td class="r b">${esc(fmt(i.precio*i.qty))}</td></tr>`).join("");
-    const logo = `<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" rx="16" fill="#f97316"/><path d="M20 46V18h24v7H28v5h13v7H28v9z" fill="#fff"/><circle cx="46" cy="44" r="4" fill="#fff"/></svg>`;
+    const logoUrl = LOGO_FOODIES;
     const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Factura ${esc(f.numero)} - ${esc(L.nombre)}</title>
 <style>
-@page{size:A4;margin:14mm}
-*{box-sizing:border-box}body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1c1917;margin:0;background:#f5f5f4}
-.hoja{max-width:780px;margin:20px auto;background:#fff;padding:36px 40px;border-radius:14px;box-shadow:0 6px 30px #0001}
-.top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:4px solid #f97316;padding-bottom:18px}
-.marca{display:flex;gap:14px;align-items:center}.marca h1{margin:0;font-size:30px;letter-spacing:3px;font-weight:900}.marca h1 span{color:#f97316}
-.marca .sub{font-size:12px;color:#78716c;margin-top:4px;line-height:1.5}
-.doc{text-align:right}.doc .t{font-size:12px;letter-spacing:2px;color:#78716c;font-weight:700}.doc .n{font-size:22px;font-weight:900;color:#f97316;margin:2px 0}
-.doc .f{font-size:13px;color:#44403c;line-height:1.6}
-.cli{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 18px;margin:20px 0;font-size:13px}
-.cli b{color:#9a3412;font-size:11px;letter-spacing:1px;text-transform:uppercase;display:block}
-table{width:100%;border-collapse:collapse;font-size:13px}th{background:#1c1917;color:#fff;text-align:left;padding:10px;font-size:11px;letter-spacing:1px;text-transform:uppercase}
-td{padding:10px;border-bottom:1px solid #e7e5e4}.c{text-align:center;width:60px}.r{text-align:right;white-space:nowrap}.b{font-weight:700}
-.tot{display:flex;justify-content:flex-end;margin-top:16px}.tot div{background:#1c1917;color:#fff;border-radius:10px;padding:14px 22px;text-align:right}
-.tot small{display:block;font-size:11px;letter-spacing:2px;color:#a8a29e}.tot strong{font-size:28px;color:#fb923c}
+@page{size:A4;margin:12mm}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1c1917;margin:0;background:#e7e5e4}
+.hoja{max-width:780px;margin:20px auto;background:#fff;border-radius:14px;box-shadow:0 6px 30px #0002;overflow:hidden}
+.top{display:flex;justify-content:space-between;align-items:center;gap:20px;background:#0c0a09;color:#fff;padding:22px 32px;border-bottom:5px solid #dc2626}
+.marca{display:flex;gap:16px;align-items:center}.marca img{width:96px;height:96px;border-radius:14px;display:block}
+.marca h1{margin:0;font-size:28px;letter-spacing:3px;font-weight:900;color:#fff}.marca h1 span{color:#ef4444}
+.marca .sub{font-size:12px;color:#d6d3d1;margin-top:6px;line-height:1.55}
+.doc{text-align:right}.doc .t{font-size:11px;letter-spacing:2px;color:#a8a29e;font-weight:700}.doc .n{font-size:24px;font-weight:900;color:#ef4444;margin:2px 0}
+.doc .f{font-size:13px;color:#e7e5e4;line-height:1.6}.doc .f b{color:#fff}
+.cuerpo{padding:24px 32px 30px}
+.cli{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;background:#fef2f2;border:1px solid #fecaca;border-left:5px solid #dc2626;border-radius:10px;padding:14px 18px;margin:0 0 20px;font-size:13px}
+.cli b{color:#991b1b;font-size:11px;letter-spacing:1px;text-transform:uppercase;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px}th{background:#0c0a09;color:#fff;text-align:left;padding:10px;font-size:11px;letter-spacing:1px;text-transform:uppercase}
+td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background:#fafaf9}.c{text-align:center;width:60px}.r{text-align:right;white-space:nowrap}.b{font-weight:700}
+.tot{display:flex;justify-content:flex-end;margin-top:16px}.tot div{background:#0c0a09;color:#fff;border-radius:10px;padding:14px 22px;text-align:right;border-bottom:4px solid #dc2626}
+.tot small{display:block;font-size:11px;letter-spacing:2px;color:#a8a29e}.tot strong{font-size:30px;color:#ef4444}
 .pago{font-size:12px;color:#57534e;margin-top:10px;text-align:right}
-.pie{margin-top:30px;text-align:center;font-size:12px;color:#78716c;border-top:1px dashed #d6d3d1;padding-top:16px;line-height:1.7}
-.pie .gr{font-size:16px;font-weight:800;color:#f97316}
+.pie{margin-top:28px;text-align:center;font-size:12px;color:#78716c;border-top:1px dashed #d6d3d1;padding-top:16px;line-height:1.7}
+.pie .gr{font-size:17px;font-weight:900;color:#dc2626;letter-spacing:.5px}
 .barra{max-width:780px;margin:16px auto 0;display:flex;gap:10px;justify-content:flex-end;padding:0 10px}
-.barra button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:12px 22px;font-size:15px;font-weight:700;cursor:pointer}
-@media print{body{background:#fff}.hoja{box-shadow:none;margin:0;padding:0}.barra{display:none}}
-@media (max-width:600px){.hoja{padding:20px;margin:8px}.top{flex-direction:column}.doc{text-align:left}.cli{grid-template-columns:1fr}}
+.barra button{background:#dc2626;color:#fff;border:0;border-radius:8px;padding:12px 22px;font-size:15px;font-weight:700;cursor:pointer}
+@media print{body{background:#fff}.hoja{box-shadow:none;margin:0;border-radius:0}.barra{display:none}}
+@media (max-width:600px){.hoja{margin:8px}.top{flex-direction:column;align-items:flex-start;padding:18px}.doc{text-align:left}.cuerpo{padding:18px}.cli{grid-template-columns:1fr}.marca img{width:72px;height:72px}}
 </style></head><body>
 <div class="barra"><button onclick="window.print()">🖨️ Imprimir / Guardar PDF</button></div>
 <div class="hoja">
   <div class="top">
-    <div class="marca">${logo}<div><h1>${esc(L.nombre).replace(/FOODIES/i,'<span>FOODIES</span>')}</h1>
+    <div class="marca"><img src="${logoUrl}" alt="Logo ${esc(L.nombre)}"><div><h1>${esc(L.nombre).replace(/FOODIES/i,'<span>FOODIES</span>')}</h1>
       <div class="sub">${[L.direccion, L.telefono&&("Tel/WhatsApp: "+L.telefono), L.instagram, L.cuit&&("CUIT: "+L.cuit)].filter(Boolean).map(esc).join("<br>")}</div></div></div>
     <div class="doc"><div class="t">COMPROBANTE DE VENTA</div><div class="n">${esc(f.numero)}</div>
       <div class="f">Fecha: <b>${esc(fechaTxt)}</b><br>${f.comanda&&f.comanda!=="—"?"Comanda: <b>#"+esc(f.comanda)+"</b><br>":""}${esc(f.tipoVenta||"")}${f.vendedor?" · Atendió: "+esc(f.vendedor):""}</div></div>
   </div>
+  <div class="cuerpo">
   <div class="cli">
     <div><b>Cliente</b>${esc(impCli.nombre)||"Consumidor final"}</div>
     <div><b>DNI</b>${esc(impCli.dni)||"—"}</div>
@@ -812,8 +816,9 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}.c{text-align:center;width:60px}
   <div class="tot"><div><small>TOTAL</small><strong>${esc(fmt(f.total))}</strong></div></div>
   <div class="pago">Forma de pago: ${pagos.map(([m,imp])=>esc(m)+(parseFloat(imp)?" "+esc(fmt(parseFloat(imp))):"")).join(" + ")}</div>
   <div class="pie"><div class="gr">¡Gracias por elegir ${esc(L.nombre)}!</div>${L.instagram?"Seguinos en "+esc(L.instagram)+"<br>":""}${L.telefono?"Pedidos: "+esc(L.telefono)+"<br>":""}<span style="font-size:10px">Documento no válido como factura fiscal</span></div>
+  </div>
 </div>
-<script>setTimeout(function(){window.print()},500)</script>
+<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},300)})</script>
 </body></html>`;
     const w = window.open("","_blank");
     if(!w){ alert("El navegador bloqueó la ventana. Permití las ventanas emergentes para esta página."); return; }
@@ -1351,7 +1356,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       )}
 
       <header style={css.header} className="fHeader">
-        <div><div style={css.logo} className="fLogo">🍔 Foodies</div><div style={{fontSize:10,color:C.muted,letterSpacing:"2px",textTransform:"uppercase"}} className="fHideM">Sistema de Gestión</div></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><img src={LOGO_FOODIES} alt="" style={{width:38,height:38,borderRadius:8,display:"block"}}/><div><div style={css.logo} className="fLogo">Foodies LK</div><div style={{fontSize:10,color:C.muted,letterSpacing:"2px",textTransform:"uppercase"}} className="fHideM">Sistema de Gestión</div></div></div>
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}} className="fAlerts">
           {transferPendientes.length>0&&<div style={{background:"#7c2d12",border:`1px solid ${C.danger}`,borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#fb923c"}} onClick={()=>setTab("transferencias")}>⚠️ {transferPendientes.length} transf.</div>}
           {deudaTotalCC>0&&esVentas&&<div style={{background:"#1e3a5f",border:`1px solid ${C.info}`,borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:C.info}} onClick={()=>setTab("cuentacorriente")}>🏦 CC: {fmt(deudaTotalCC)}</div>}
