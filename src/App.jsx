@@ -341,6 +341,9 @@ export default function FoodiesApp() {
   const [trDesde, setTrDesde] = useState(""); const [trHasta, setTrHasta] = useState("");
   const [pagosCC, setPagosCC] = useState([]);
   const [ccCliente, setCcCliente] = useState(""); const [ccMonto, setCcMonto] = useState(""); const [ccObs, setCcObs] = useState("");
+  // Consulta de cuenta corriente (abajo): búsqueda por cliente, estado y fechas de pagos
+  const [ccBusq, setCcBusq] = useState(""); const [ccEstado, setCcEstado] = useState("todos");
+  const [ccPDesde, setCcPDesde] = useState(""); const [ccPHasta, setCcPHasta] = useState("");
   const [ifDesde, setIfDesde] = useState(""); const [ifHasta, setIfHasta] = useState(""); const [ifVendedor, setIfVendedor] = useState(""); const [ifTurno, setIfTurno] = useState(""); const [ifTipo, setIfTipo] = useState("");
   const [pfNombre, setPfNombre] = useState(""); const [pfPrecio, setPfPrecio] = useState(""); const [pfEdit, setPfEdit] = useState(null); const [bProd, setBProd] = useState("");
   const [cfN, setCfN] = useState(""); const [cfA, setCfA] = useState(""); const [cfT, setCfT] = useState(""); const [cfDir, setCfDir] = useState(""); const [bCli, setBCli] = useState("");
@@ -938,9 +941,12 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const registrarPagoCC = async () => {
     if(!ccCliente||!ccMonto) return;
     const cli = clientes.find(c=>c.id===ccCliente); const id = gid();
-    await supabase.from("pagos_cc").insert({id,cliente_id:ccCliente,cliente_nombre:cli?.nombre||"",monto:parseFloat(ccMonto),fecha:hoy(),obs:ccObs});
-    setPagosCC(prev=>[...prev,{id,clienteId:ccCliente,clienteNombre:cli?.nombre||"",monto:parseFloat(ccMonto),fecha:hoy(),obs:ccObs}]);
-    setCcMonto(""); setCcObs("");
+    // El nombre sale del cliente o, si la deuda se cargó solo con nombre, de la lista de saldos
+    const nombre = (cli?((cli.nombre||"")+" "+(cli.apellido||"")).trim():"") || saldosCC.find(x=>x.key===ccCliente)?.nombre || ccCliente;
+    const { error } = await supabase.from("pagos_cc").insert({id,cliente_id:ccCliente,cliente_nombre:nombre,monto:parseFloat(ccMonto),fecha:hoy(),obs:ccObs});
+    if(error){ alert("No se pudo registrar el pago: "+error.message); return; }
+    setPagosCC(prev=>[...prev,{id,clienteId:ccCliente,clienteNombre:nombre,monto:parseFloat(ccMonto),fecha:hoy(),obs:ccObs}]);
+    setCcCliente(""); setCcMonto(""); setCcObs("");
   };
 
   // ── CAJA ──
@@ -1532,12 +1538,13 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const facturasCC = facturas.filter(f=>f.medioPago1==="Cuenta Corriente"||f.medioPago2==="Cuenta Corriente");
   const saldoPorCliente = () => {
     const saldos = {};
-    facturasCC.forEach(f=>{ const k=f.clienteId||f.cliente||"Sin cliente"; const n=f.cliente||"Sin cliente"; if(!saldos[k]) saldos[k]={nombre:n,deuda:0,pagado:0}; saldos[k].deuda+=((f.medioPago1==="Cuenta Corriente"?f.importe1:0)+(f.medioPago2==="Cuenta Corriente"?f.importe2:0)); });
-    pagosCC.forEach(p=>{ if(!saldos[p.clienteId]) saldos[p.clienteId]={nombre:p.clienteNombre,deuda:0,pagado:0}; saldos[p.clienteId].pagado+=p.monto; });
+    // getCC: si la factura quedó con importe en 0, toma el total (antes esas deudas no se sumaban)
+    facturasCC.forEach(f=>{ const k=f.clienteId||f.cliente||"Sin cliente"; const n=f.cliente||"Sin cliente"; if(!saldos[k]) saldos[k]={nombre:n,deuda:0,pagado:0,ultCompra:"",ultPago:""}; saldos[k].deuda+=getCC(f); if((f.fecha||"")>saldos[k].ultCompra) saldos[k].ultCompra=f.fecha||""; });
+    pagosCC.forEach(p=>{ if(!saldos[p.clienteId]) saldos[p.clienteId]={nombre:p.clienteNombre,deuda:0,pagado:0,ultCompra:"",ultPago:""}; saldos[p.clienteId].pagado+=p.monto; if((p.fecha||"")>saldos[p.clienteId].ultPago) saldos[p.clienteId].ultPago=p.fecha||""; });
     return Object.entries(saldos).map(([k,v])=>({...v,key:k,saldo:v.deuda-v.pagado}));
   };
   const saldosCC = saldoPorCliente();
-  const deudaTotalCC = saldosCC.reduce((s,x)=>s+(x.saldo>0?x.saldo:0),0);
+  const deudaTotalCC = saldosCC.reduce((s,x)=>s+(x.saldo>1?x.saldo:0),0);
   const transferPendientes = facturas.filter(f=>tieneTransfer(f)&&f.transferConfirmada===false);
   const transferConfirmadas = facturas.filter(f=>tieneTransfer(f)&&f.transferConfirmada===true);
 
@@ -2168,28 +2175,53 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </>}
 
         {/* ══ CUENTA CORRIENTE ══ */}
-        {tab==="cuentacorriente"&&esVentas&&<>
-          <div style={css.card}><div style={css.cardTitle}>🏦 Saldos CC</div>
-            {saldosCC.length===0?<p style={{color:C.muted,textAlign:"center",padding:"24px 0"}}>No hay movimientos.</p>:
-              <table style={css.table}><thead><tr><th style={css.th}>Cliente</th><th style={css.th}>Deuda</th><th style={css.th}>Pagado</th><th style={css.th}>Saldo</th></tr></thead>
-                <tbody>{saldosCC.map(x=><tr key={x.key} style={{background:x.saldo>0?"#1e3a5f11":"transparent"}}><td style={{...css.td,fontWeight:600}}>{x.nombre}</td><td style={{...css.td,color:C.danger}}>{fmt(x.deuda)}</td><td style={{...css.td,color:C.success}}>{fmt(x.pagado)}</td><td style={css.td}><span style={{fontWeight:800,fontSize:14,color:x.saldo>0?C.warn:C.success}}>{x.saldo>0?fmt(x.saldo):"✅ Al día"}</span></td></tr>)}</tbody>
-              </table>}
+        {tab==="cuentacorriente"&&esVentas&&(()=>{
+          const deben = saldosCC.filter(x=>x.saldo>1).sort((a,b)=>b.saldo-a.saldo);
+          const q = normTxt(ccBusq);
+          const consulta = saldosCC.filter(x=>(!q||normTxt(x.nombre).includes(q)) && (ccEstado==="todos"||(ccEstado==="deben"?x.saldo>1:x.saldo<=1))).sort((a,b)=>b.saldo-a.saldo||a.nombre.localeCompare(b.nombre));
+          const pagosFilt = pagosCC.filter(p=>(!q||normTxt(p.clienteNombre).includes(q)) && (!ccPDesde||p.fecha>=ccPDesde) && (!ccPHasta||p.fecha<=ccPHasta)).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+          return <>
+          {/* ARRIBA: solo los que deben */}
+          <div style={css.card}><div style={css.cardTitle}>🔴 Clientes que deben ({deben.length})</div>
+            {deben.length===0?<p style={{color:C.success,textAlign:"center",padding:"24px 0",fontWeight:700}}>✅ Nadie debe. Todas las cuentas están al día.</p>:
+              <div style={{overflowX:"auto"}}><table style={css.table}><thead><tr><th style={css.th}>Cliente</th><th style={css.th}>Deuda</th><th style={css.th}>Pagado</th><th style={css.th}>Saldo</th><th style={css.th}>Últ. compra</th><th style={css.th}></th></tr></thead>
+                <tbody>{deben.map(x=><tr key={x.key}><td style={{...css.td,fontWeight:600}}>{x.nombre}</td><td style={{...css.td,color:C.danger}}>{fmt(x.deuda)}</td><td style={{...css.td,color:C.success}}>{fmt(x.pagado)}</td><td style={css.td}><span style={{fontWeight:800,fontSize:14,color:C.warn}}>{fmt(x.saldo)}</span></td><td style={{...css.td,color:C.muted}}>{x.ultCompra?fmtFecha(x.ultCompra):"—"}</td>
+                  <td style={css.td}><button style={{...css.btn("success"),padding:"5px 10px",fontSize:11}} onClick={()=>{setCcCliente(x.key);setCcMonto(String(Math.round(x.saldo)));irA("cc-monto");}}>💵 Cobrar</button></td></tr>)}</tbody>
+              </table></div>}
             {deudaTotalCC>0&&<div style={css.total}><div style={{fontSize:11,color:C.muted}}>DEUDA TOTAL</div><div style={{fontSize:24,fontWeight:800,color:C.warn}}>{fmt(deudaTotalCC)}</div></div>}
           </div>
           <div style={css.card}><div style={css.cardTitle}>💵 Registrar Pago</div>
             <div style={css.row}>
-              <div style={css.col}><div style={css.lbl}>Cliente</div><select style={css.sel} value={ccCliente} onChange={e=>setCcCliente(e.target.value)}><option value="">— Seleccionar —</option>{saldosCC.filter(x=>x.saldo>0).map(x=><option key={x.key} value={x.key}>{x.nombre} — debe {fmt(x.saldo)}</option>)}</select></div>
-              <div style={{...css.col,maxWidth:160}}><div style={css.lbl}>Monto ($)</div><input style={css.input} type="number" placeholder="0" value={ccMonto} onChange={e=>setCcMonto(e.target.value)}/></div>
-              <div style={css.col}><div style={css.lbl}>Obs.</div><input style={css.input} placeholder="Ej: pagó en efectivo" value={ccObs} onChange={e=>setCcObs(e.target.value)}/></div>
+              <div style={css.col}><div style={css.lbl}>Cliente</div><select style={css.sel} value={ccCliente} onChange={e=>{setCcCliente(e.target.value);const x=saldosCC.find(y=>y.key===e.target.value);if(x)setCcMonto(String(Math.round(x.saldo)));}}><option value="">— Seleccionar —</option>{deben.map(x=><option key={x.key} value={x.key}>{x.nombre} — debe {fmt(x.saldo)}</option>)}</select></div>
+              <div style={{...css.col,maxWidth:160}}><div style={css.lbl}>Monto ($)</div><input id="cc-monto" style={css.input} type="number" inputMode="numeric" placeholder="0" value={ccMonto} onChange={e=>setCcMonto(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("cc-obs");}}}/></div>
+              <div style={css.col}><div style={css.lbl}>Obs.</div><input id="cc-obs" style={css.input} placeholder="Ej: pagó en efectivo" value={ccObs} onChange={e=>setCcObs(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();registrarPagoCC();}}}/></div>
               <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("success")} onClick={registrarPagoCC}>✅ Registrar</button></div>
             </div>
+            <div style={{fontSize:11,color:C.muted,marginTop:6}}>Cuando el saldo llega a cero, el cliente sale solo de la lista de arriba.</div>
           </div>
-          {pagosCC.length>0&&<div style={css.card}><div style={css.cardTitle}>📋 Historial Pagos</div>
-            <table style={css.table}><thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Cliente</th><th style={css.th}>Monto</th><th style={css.th}>Obs.</th></tr></thead>
-              <tbody>{pagosCC.map(p=><tr key={p.id}><td style={css.td}>{p.fecha}</td><td style={{...css.td,fontWeight:600}}>{p.clienteNombre}</td><td style={{...css.td,fontWeight:700,color:C.success}}>{fmt(p.monto)}</td><td style={{...css.td,color:C.muted}}>{p.obs||"—"}</td></tr>)}</tbody>
-            </table>
-          </div>}
-        </>}
+          {/* ABAJO: consulta con filtros */}
+          <div style={css.card}><div style={css.cardTitle}>🔍 Consultar cuentas corrientes</div>
+            <div style={{background:"#111",borderRadius:9,padding:10,marginBottom:12}}>
+              <div style={css.row}>
+                <div style={{...css.col,flex:2}}><div style={css.lbl}>Cliente</div><input style={css.input} placeholder="Escribí el nombre..." value={ccBusq} onChange={e=>setCcBusq(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Estado</div><select style={css.sel} value={ccEstado} onChange={e=>setCcEstado(e.target.value)}><option value="todos">Todos</option><option value="deben">Deben</option><option value="aldia">Al día</option></select></div>
+                <div style={css.col}><div style={css.lbl}>Pagos desde</div><input style={css.input} type="date" value={ccPDesde} onChange={e=>setCcPDesde(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Pagos hasta</div><input style={css.input} type="date" value={ccPHasta} onChange={e=>setCcPHasta(e.target.value)}/></div>
+                <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setCcBusq("");setCcEstado("todos");setCcPDesde("");setCcPHasta("");}}>✕</button></div>
+              </div>
+            </div>
+            {consulta.length===0?<p style={{color:C.muted,textAlign:"center",padding:"16px"}}>Sin resultados.</p>:
+              <div style={{overflowX:"auto"}}><table style={css.table}><thead><tr><th style={css.th}>Cliente</th><th style={css.th}>Deuda</th><th style={css.th}>Pagado</th><th style={css.th}>Saldo</th><th style={css.th}>Últ. compra</th><th style={css.th}>Últ. pago</th></tr></thead>
+                <tbody>{consulta.map(x=><tr key={x.key}><td style={{...css.td,fontWeight:600}}>{x.nombre}</td><td style={{...css.td,color:C.danger}}>{fmt(x.deuda)}</td><td style={{...css.td,color:C.success}}>{fmt(x.pagado)}</td><td style={css.td}><span style={{fontWeight:800,fontSize:14,color:x.saldo>1?C.warn:C.success}}>{x.saldo>1?fmt(x.saldo):"✅ Al día"}</span></td><td style={{...css.td,color:C.muted}}>{x.ultCompra?fmtFecha(x.ultCompra):"—"}</td><td style={{...css.td,color:C.muted}}>{x.ultPago?fmtFecha(x.ultPago):"—"}</td></tr>)}</tbody>
+              </table></div>}
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,margin:"16px 0 8px",textTransform:"uppercase",letterSpacing:"1px"}}>📋 Pagos registrados ({pagosFilt.length})</div>
+            {pagosFilt.length===0?<p style={{color:C.muted,textAlign:"center",padding:"12px"}}>Sin pagos en el filtro.</p>:
+              <div style={{overflowX:"auto"}}><table style={css.table}><thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Cliente</th><th style={css.th}>Monto</th><th style={css.th}>Obs.</th></tr></thead>
+                <tbody>{pagosFilt.map(p=><tr key={p.id}><td style={css.td}>{fmtFecha(p.fecha)}</td><td style={{...css.td,fontWeight:600}}>{p.clienteNombre}</td><td style={{...css.td,fontWeight:700,color:C.success}}>{fmt(p.monto)}</td><td style={{...css.td,color:C.muted}}>{p.obs||"—"}</td></tr>)}</tbody>
+              </table></div>}
+          </div>
+          </>;
+        })()}
 
         {/* ══ INFORMES ══ */}
         {tab==="informes"&&esAdmin&&<>
