@@ -7,6 +7,23 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY
 );
 
+// Supabase devuelve como máximo 1.000 filas por consulta.
+// traerTodo pide de a 1.000 hasta traer la tabla completa (la versión del 3/9 lo hacía; se había perdido).
+const traerTodo = async (tabla, orden, asc=false) => {
+  const N = 1000; let todo = []; let page = 0;
+  while(true){
+    let q = supabase.from(tabla).select("*");
+    if(orden) q = q.order(orden,{ascending:asc});
+    q = q.order("id",{ascending:true}); // desempate fijo para que no se repitan ni salteen filas entre páginas
+    const { data, error } = await q.range(page*N,(page+1)*N-1);
+    if(error) return { data: page===0 ? null : todo, error };
+    todo = todo.concat(data||[]);
+    if(!data || data.length < N) break;
+    page++;
+  }
+  return { data: todo, error: null };
+};
+
 const USUARIOS = {
   admin:    { pass:"kokis1990",   rol:"admin" },
   empleado: { pass:"LKFOODIES",  rol:"empleado" },
@@ -402,8 +419,9 @@ export default function FoodiesApp() {
 
     // Ventas (tablas que ya existían)
     try {
-      const { data:facts } = await supabase.from("facturas").select("*").order("created_at",{ascending:false});
-      const { data:items } = await supabase.from("factura_items").select("*");
+      const [{ data:facts }, { data:items }] = await Promise.all([ traerTodo("facturas","created_at",false), traerTodo("factura_items") ]);
+      const itemsPorFactura = {};
+      (items||[]).forEach(i=>{ (itemsPorFactura[i.factura_id] ||= []).push(i); });
       if(facts && items) setFacturas(facts.map(f=>({
         ...f, id:f.id, numero:f.numero, comanda:f.comanda, fecha:f.fecha,
         turno:f.turno, tipoVenta:f.tipo_venta, vendedor:f.vendedor, cadete:f.cadete,
@@ -411,12 +429,12 @@ export default function FoodiesApp() {
         medioPago1:f.medio_pago1, importe1:f.importe1,
         medioPago2:f.medio_pago2, importe2:f.importe2,
         transferConfirmada:f.transfer_confirmada, total:f.total, notas:f.notas, estado:f.estado,
-        items:(items||[]).filter(i=>i.factura_id===f.id).map(i=>({id:i.id,prodId:i.prod_id,nombre:i.nombre,precio:i.precio,qty:i.qty}))
+        items:(itemsPorFactura[f.id]||[]).map(i=>({id:i.id,prodId:i.prod_id,nombre:i.nombre,precio:i.precio,qty:i.qty}))
       })));
     } catch(e) { console.error("facturas:",e); }
 
     try {
-      const { data:cierresDb } = await supabase.from("cierres_caja").select("*").order("created_at",{ascending:false});
+      const { data:cierresDb } = await traerTodo("cierres_caja","created_at",false);
       if(cierresDb) setCierres(cierresDb.map(c=>({
         id:c.id, fecha:c.fecha, turno:c.turno, facturas:c.facturas_count,
         efectivo:parseFloat(c.efectivo)||0, transferConfirmada:parseFloat(c.transfer_confirmada)||0,
@@ -428,7 +446,7 @@ export default function FoodiesApp() {
     } catch(e) { console.error("cierres:",e); }
 
     try {
-      const { data:grDb } = await supabase.from("gastos_retiros").select("*").order("created_at",{ascending:false});
+      const { data:grDb } = await traerTodo("gastos_retiros","created_at",false);
       if(grDb) setGastosRetiros(grDb.map(g=>({
         id:g.id, fecha:g.fecha, hora:g.hora||"", turno:g.turno,
         tipo:g.tipo, concepto:g.concepto, monto:parseFloat(g.monto)||0, cierreId:g.cierre_id
@@ -449,12 +467,12 @@ export default function FoodiesApp() {
     } catch(e) { console.error("alertas_comanda:",e); }
 
     try {
-      const { data:pagos } = await supabase.from("pagos_cc").select("*").order("created_at",{ascending:false});
+      const { data:pagos } = await traerTodo("pagos_cc","created_at",false);
       if(pagos) setPagosCC(pagos.map(p=>({id:p.id,clienteId:p.cliente_id,clienteNombre:p.cliente_nombre,monto:p.monto,fecha:p.fecha,obs:p.obs})));
     } catch(e) { console.error("pagos_cc:",e); }
 
     try {
-      const { data:config } = await supabase.from("configuracion").select("*");
+      const { data:config } = await traerTodo("configuracion");
       if(config) {
         // Fix old records with non-UUID ids: delete and reinsert with proper IDs
         const oldRecords = config.filter(r=>r.id&&r.id.length<=3);
@@ -464,7 +482,7 @@ export default function FoodiesApp() {
             await supabase.from("configuracion").insert({id:gid(),tipo:r.tipo,valor:r.valor,activo:true});
           }
           // Reload after fix
-          const {data:configFixed} = await supabase.from("configuracion").select("*");
+          const {data:configFixed} = await traerTodo("configuracion");
           if(configFixed) {
             const v2=configFixed.filter(r=>r.tipo==="vendedor").map(r=>r.valor);
             const ca2=configFixed.filter(r=>r.tipo==="cadete").map(r=>r.valor);
@@ -490,7 +508,7 @@ export default function FoodiesApp() {
 
     // Clientes — tabla nueva, manejo robusto
     try {
-      const { data:clientesDb, error:errCli } = await supabase.from("clientes").select("*").order("nombre",{ascending:true});
+      const { data:clientesDb, error:errCli } = await traerTodo("clientes","nombre",true);
       if(errCli) throw errCli;
       if(clientesDb && clientesDb.length>0) {
         setClientes(clientesDb.map(c=>({id:c.id,nombre:c.nombre,apellido:c.apellido||"",telefono:c.telefono||"",direccion:c.direccion||""})));
@@ -509,33 +527,33 @@ export default function FoodiesApp() {
 
     // Personal — tablas nuevas, manejo robusto
     try {
-      const { data:empsDb } = await supabase.from("empleados").select("*").order("nombre",{ascending:true});
+      const { data:empsDb } = await traerTodo("empleados","nombre",true);
       if(empsDb) setEmpleados(empsDb.map(e=>({id:e.id,nombre:e.nombre,dni:e.dni||"",telefono:e.telefono||"",telefonoAlt:e.telefono_alt||"",direccion:e.direccion||"",email:e.email||"",rol:e.rol||"Ayudante",valorHora:parseFloat(e.valor_hora)||0,fechaIngreso:e.fecha_ingreso||"",notas:e.notas||"",categoria:e.categoria||"",activo:e.activo!==false})));
     } catch(e) { console.error("empleados:",e); }
 
     try {
-      const { data:horasDb } = await supabase.from("horas_trabajo").select("*").order("fecha",{ascending:false});
+      const { data:horasDb } = await traerTodo("horas_trabajo","fecha",false);
       if(horasDb) setHorasTrabajo(horasDb.map(h=>({id:h.id,empleadoId:h.empleado_id,fecha:h.fecha,horas:parseFloat(h.horas),horaEntrada:h.hora_entrada||"",horaSalida:h.hora_salida||"",turno:h.turno||"",obs:h.obs||""})));
     } catch(e) { console.error("horas:",e); }
 
     try {
-      const { data:movsDb } = await supabase.from("movimientos_personal").select("*").order("fecha",{ascending:false});
+      const { data:movsDb } = await traerTodo("movimientos_personal","fecha",false);
       if(movsDb) setMovimientosPersonal(movsDb.map(m=>({id:m.id,empleadoId:m.empleado_id,tipo:m.tipo,monto:parseFloat(m.monto),fecha:m.fecha,descripcion:m.descripcion||""})));
     } catch(e) { console.error("movimientos:",e); }
 
     try {
-      const { data:semanasDb } = await supabase.from("semanas_personal").select("*").order("semana_inicio",{ascending:false});
+      const { data:semanasDb } = await traerTodo("semanas_personal","semana_inicio",false);
       if(semanasDb) setSemanaPersonal(semanasDb.map(s=>({id:s.id,empleadoId:s.empleado_id,semanaInicio:s.semana_inicio,semanaFin:s.semana_fin,pagado:s.pagado||false,fechaPago:s.fecha_pago||"",montoPagado:parseFloat(s.monto_pagado)||0,obs:s.obs||""})));
     } catch(e) { console.error("semanas:",e); }
 
     try {
-      const { data:estadosDb } = await supabase.from("estados_dia").select("*");
+      const { data:estadosDb } = await traerTodo("estados_dia");
       if(estadosDb) setEstadosDia(estadosDb.map(e=>({id:e.id,empleadoId:e.empleado_id,fecha:e.fecha,estado:e.estado||"normal",obs:e.obs||""})));
     } catch(e) { console.error("estados_dia:",e); }
 
     // Productos desde Supabase
     try {
-      const { data:prodDb } = await supabase.from("productos").select("*").order("nombre",{ascending:true});
+      const { data:prodDb } = await traerTodo("productos","nombre",true);
       if(prodDb && prodDb.length>0) {
         setProductos(prodDb.map(p=>({id:p.id,nombre:p.nombre,precio:parseFloat(p.precio)||0,activo:p.activo!==false})));
       } else {
@@ -546,28 +564,28 @@ export default function FoodiesApp() {
 
     // Proveedores desde Supabase
     try {
-      const { data:provDb } = await supabase.from("proveedores").select("*").order("nombre",{ascending:true});
+      const { data:provDb } = await traerTodo("proveedores","nombre",true);
       if(provDb && provDb.length>0) { setProveedores(provDb.map(p=>p.nombre)); }
       else { setProveedores(PROVEEDORES_INICIALES); await supabase.from("proveedores").upsert(PROVEEDORES_INICIALES.map((nombre,i)=>({id:"PROV"+i,nombre})),{onConflict:"id"}); }
     } catch(e) { console.error("proveedores:",e); }
 
     // Artículos de compras desde Supabase
     try {
-      const { data:artDb } = await supabase.from("articulos_compras").select("*").order("nombre",{ascending:true});
+      const { data:artDb } = await traerTodo("articulos_compras","nombre",true);
       if(artDb && artDb.length>0) { setArticulosCompra(artDb.map(a=>({id:a.id,nombre:a.nombre,categoria:a.categoria||"",ultimoPrecio:parseFloat(a.ultimo_precio)||0}))); }
       else { setArticulosCompra(ARTICULOS_COMPRAS); await supabase.from("articulos_compras").upsert(ARTICULOS_COMPRAS.map((a,i)=>({id:"ART"+i,nombre:a.nombre,categoria:a.categoria||"",ultimo_precio:0})),{onConflict:"id"}); }
     } catch(e) { console.error("articulos:",e); }
 
     // Pagos a proveedores desde Supabase
     try {
-      const { data:pagProvDb } = await supabase.from("pagos_proveedores").select("*").order("created_at",{ascending:false});
+      const { data:pagProvDb } = await traerTodo("pagos_proveedores","created_at",false);
       if(pagProvDb) setPagosProveedores(pagProvDb.map(p=>({id:p.id,proveedor:p.proveedor,monto:parseFloat(p.monto)||0,forma:p.forma||"",obs:p.obs||"",nroFactura:p.nro_factura||"",fecha:p.fecha||""})));
     } catch(e) { console.error("pagos_proveedores:",e); }
 
     // Compras desde Supabase
     try {
-      const { data:comprasDb } = await supabase.from("compras").select("*").order("created_at",{ascending:false});
-      const { data:compraItemsDb } = await supabase.from("compra_items").select("*");
+      const { data:comprasDb } = await traerTodo("compras","created_at",false);
+      const { data:compraItemsDb } = await traerTodo("compra_items");
       if(comprasDb) setCompras(comprasDb.map(comp=>({
         id:comp.id, numero:comp.numero, fecha:comp.fecha, proveedor:comp.proveedor,
         nroFactura:comp.nro_factura||"", tipoFactura:comp.tipo_factura||"",
@@ -580,7 +598,7 @@ export default function FoodiesApp() {
     } catch(e) { console.error("compras:",e); }
 
     try {
-      const { data:perdidasDb } = await supabase.from("perdidas").select("*").order("fecha_hora",{ascending:false});
+      const { data:perdidasDb } = await traerTodo("perdidas","fecha_hora",false);
       if(perdidasDb) setPerdidas(perdidasDb.map(p=>({id:p.id,fechaHora:p.fecha_hora,tipo:p.tipo,comanda:p.comanda||"",insumo:p.insumo||"",producto:p.producto||"",cantidad:parseFloat(p.cantidad)||0,monto:parseFloat(p.monto)||0,costoEstimado:parseFloat(p.costo_estimado)||0,descripcion:p.descripcion||"",usuario:p.usuario||"",estado:p.estado||"Pendiente"})));
     } catch(e) { console.error("perdidas:",e); }
 
