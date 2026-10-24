@@ -14,7 +14,11 @@ const USUARIOS = {
 
 const DIAS_ALERTA = 30;
 const gid = () => Math.random().toString(36).substr(2,9);
-const hoy = () => new Date().toISOString().split("T")[0];
+// Fecha local (Argentina). Antes usaba UTC y después de las 21 hs daba el día siguiente.
+const hoy = () => new Date().toLocaleDateString("en-CA");
+const turnoPorHora = () => new Date().getHours()<16?"Mañana":"Noche";
+const TURNO_KEY = "foodies_turno_activo";
+const leerTurnoGuardado = () => { try { const t = localStorage.getItem(TURNO_KEY); return t ? JSON.parse(t) : null; } catch(e) { return null; } };
 const fmt = (n) => `$${Number(n||0).toLocaleString("es-AR")}`;
 const diasDesde = (fecha) => Math.floor((new Date()-new Date(fecha))/(1000*60*60*24));
 
@@ -243,6 +247,17 @@ export default function FoodiesApp() {
   const [mediosPago, setMediosPago] = useState([]);
   const [tiposVenta, setTiposVenta] = useState([]);
   const [nf, setNf] = useState(emptyNf());
+  // ── Turno (apertura con control de correlatividad) ──
+  const [turnoActivo, setTurnoActivo] = useState(leerTurnoGuardado);
+  const [taFecha, setTaFecha] = useState(hoy());
+  const [taTurno, setTaTurno] = useState(turnoPorHora());
+  const [taVendedor, setTaVendedor] = useState("");
+  const [taComanda, setTaComanda] = useState("");
+  const [modalAutorizacion, setModalAutorizacion] = useState(null);
+  const [pinIngresado, setPinIngresado] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinVerificando, setPinVerificando] = useState(false);
+  const [alertasCorr, setAlertasCorr] = useState([]);
   const [selProd, setSelProd] = useState(""); const [selQty, setSelQty] = useState(""); const [selPrecio, setSelPrecio] = useState(""); const [selBusq, setSelBusq] = useState("");
   // Buscador cliente en factura
   const [nfCliBusq, setNfCliBusq] = useState(""); const [nfCliOpen, setNfCliOpen] = useState(false);
@@ -344,6 +359,13 @@ export default function FoodiesApp() {
         efectivoEsperado:c.efectivo_esperado, diferencia:c.diferencia, obs:c.obs
       })));
     } catch(e) { console.error("cierres:",e); }
+
+    // Alertas de correlatividad (turnos abiertos con código) — últimos 7 días, sin marcar como vistas
+    try {
+      const desde7 = new Date(Date.now()-7*24*60*60*1000).toISOString();
+      const { data:al } = await supabase.from("alertas_comanda").select("*").eq("estado","autorizado").gte("created_at",desde7).order("created_at",{ascending:false});
+      if(al) setAlertasCorr(al);
+    } catch(e) { console.error("alertas_comanda:",e); }
 
     try {
       const { data:pagos } = await supabase.from("pagos_cc").select("*").order("created_at",{ascending:false});
@@ -534,8 +556,76 @@ export default function FoodiesApp() {
     setSelProd(""); setSelQty(""); setSelPrecio(""); setSelBusq("");
   };
 
+  // ── TURNO: apertura, correlatividad y cierre ──
+  const guardarTurno = (ta) => {
+    setTurnoActivo(ta);
+    try { if(ta) localStorage.setItem(TURNO_KEY, JSON.stringify(ta)); else localStorage.removeItem(TURNO_KEY); }
+    catch(e) { console.error("localStorage:", e); }
+  };
+  const ordenTurno = (fecha, turno) => (fecha||"") + (turno==="Noche"?"2":"1");
+  // Última comanda del turno anterior (o del mismo turno si se está reabriendo).
+  // Descarta números mal tipeados que se alejan mucho del resto del turno.
+  const ultimaComandaAnterior = (fecha, turno) => {
+    const actual = ordenTurno(fecha, turno);
+    const conNum = facturas.filter(f=>/^\d+$/.test(String(f.comanda||"").trim()) && ordenTurno(f.fecha,f.turno) <= actual);
+    if(conNum.length===0) return null;
+    const ultimo = conNum.reduce((m,f)=>{ const o=ordenTurno(f.fecha,f.turno); return o>m?o:m; }, "");
+    const delTurno = conNum.filter(f=>ordenTurno(f.fecha,f.turno)===ultimo);
+    const nums = delTurno.map(f=>parseInt(f.comanda)).sort((a,b)=>a-b);
+    const mediana = nums[Math.floor(nums.length/2)];
+    const validos = nums.filter(n=>Math.abs(n-mediana)<=300);
+    return { num: Math.max(...validos), fecha: delTurno[0].fecha, turno: delTurno[0].turno };
+  };
+  // Verificar código del administrador contra Supabase (hash SHA-256)
+  const verificarPin = async (pin) => {
+    try {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pin));
+      const hex = Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+      const { data } = await supabase.from("seguridad_config").select("pin_autorizacion,codigo_maestro").eq("id","config").single();
+      return !!data && (hex===data.pin_autorizacion || hex===data.codigo_maestro);
+    } catch(e) { console.error("verificarPin:",e); return false; }
+  };
+  const iniciarTurno = async (d, motivo="normal") => {
+    const ta = { vendedor:d.vendedor, turno:d.turno, fecha:d.fecha, comandaInicial:d.comandaNum,
+      hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}), inicio:Date.now(),
+      motivoAutorizacion:motivo, ultimaAnterior:d.ultima?.num??null, diferencia:d.diferencia??null };
+    guardarTurno(ta);
+    setCierreFecha(d.fecha); setCierreTurno(d.turno);
+    setTaComanda(""); setTaVendedor("");
+    if(motivo!=="normal") {
+      const alerta = { id:gid(), fecha:d.fecha, turno:d.turno, vendedor:d.vendedor,
+        comanda_ultima:d.ultima?.num??null, comanda_ingresada:d.comandaNum, diferencia:d.diferencia??0,
+        estado:"autorizado", token:gid(), autorizado_at:new Date().toISOString(), created_at:new Date().toISOString() };
+      const { error } = await supabase.from("alertas_comanda").insert(alerta);
+      if(error) console.error("alertas_comanda insert:", error);
+      setAlertasCorr(prev=>[alerta,...prev]);
+    }
+  };
+  const abrirTurno = () => {
+    if(!taVendedor) { alert("Seleccioná el vendedor"); return; }
+    const comandaNum = parseInt(taComanda);
+    if(!comandaNum) { alert("Ingresá el número de la primera comanda del turno"); return; }
+    const fecha = taFecha || hoy();
+    const ultima = ultimaComandaAnterior(fecha, taTurno);
+    const diferencia = ultima ? comandaNum - ultima.num - 1 : null; // 0 = sigue la correlatividad
+    const d = { vendedor:taVendedor, turno:taTurno, fecha, comandaNum, ultima, diferencia };
+    if(ultima && diferencia!==0) { setPinIngresado(""); setPinError(""); setModalAutorizacion(d); return; }
+    iniciarTurno(d, "normal");
+  };
+  const cerrarTurno = () => {
+    if(!window.confirm("¿Cerrar el turno? Para cargar más ventas vas a tener que abrir uno nuevo.")) return;
+    guardarTurno(null);
+  };
+  const marcarAlertaVista = async (id) => {
+    await supabase.from("alertas_comanda").update({estado:"visto"}).eq("id",id);
+    setAlertasCorr(prev=>prev.filter(a=>a.id!==id));
+  };
+
   const guardar = async () => {
-    if(!nf.vendedor||nf.items.length===0) return;
+    if(!turnoActivo) { alert("Primero abrí el turno."); return; }
+    if(nf.items.length===0) return;
+    // Fecha, turno y vendedor salen de la apertura del turno
+    nf.fecha = turnoActivo.fecha; nf.turno = turnoActivo.turno; nf.vendedor = turnoActivo.vendedor;
     // Verificar si el turno ya está cerrado
     const turnoYaCerrado = cierres.find(c=>c.fecha===nf.fecha&&c.turno===nf.turno);
     if(turnoYaCerrado&&!esAdmin) {
@@ -655,8 +745,14 @@ export default function FoodiesApp() {
       cuentaCorriente:cierreCC,efectivoContado,gastosContado,efectivoEsperado,diferencia:difCaja,obs:cierreObs};
     await supabase.from("cierres_caja").insert({id,fecha:cierreFecha,turno:cierreTurno,facturas_count:factCierre.length,
       efectivo:cierreEf,transfer_confirmada:cierreTrConf,transfer_pendiente:cierreTrPendMonto,cuenta_corriente:cierreCC,
-      efectivo_contado:efectivoContado,gastos:gastosContado,efectivo_esperado:efectivoEsperado,diferencia:difCaja,obs:cierreObs});
+      efectivo_contado:efectivoContado,gastos:gastosContado,efectivo_esperado:efectivoEsperado,diferencia:difCaja,obs:cierreObs,
+      comanda_inicial:(turnoActivo&&turnoActivo.fecha===cierreFecha&&turnoActivo.turno===cierreTurno)?turnoActivo.comandaInicial:null});
     setCierres(prev=>[c,...prev]); setCierreEfectivo(""); setCierreGastos(""); setCierreObs("");
+    // Si se cerró la caja del turno abierto, el turno se cierra solo
+    if(turnoActivo&&turnoActivo.fecha===cierreFecha&&turnoActivo.turno===cierreTurno) {
+      guardarTurno(null);
+      alert("✅ Cierre guardado. El turno quedó cerrado.");
+    }
   };
 
   const eliminarCierre = async (id) => {
@@ -1094,14 +1190,84 @@ export default function FoodiesApp() {
           <div style={css.stat}><div style={css.statV(C.accent)}>{empleados.filter(e=>e.activo).length}</div><div style={css.statL}>Empleados activos</div></div>
         </div>}
 
+        {/* ══ ALERTAS DE CORRELATIVIDAD (solo admin) ══ */}
+        {esAdmin&&alertasCorr.length>0&&<div style={{background:"#2a0f0f",border:`1px solid ${C.danger}`,borderRadius:10,padding:"12px 14px",marginBottom:12}}>
+          <div style={{fontWeight:800,color:C.danger,marginBottom:6}}>🚨 {alertasCorr.length} turno{alertasCorr.length>1?"s":""} abierto{alertasCorr.length>1?"s":""} sin seguir la correlatividad</div>
+          {alertasCorr.map(a=><div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${C.border}`,fontSize:12,flexWrap:"wrap"}}>
+            <span><b>{a.vendedor}</b> · {a.turno} {a.fecha} · última #{a.comanda_ultima??"—"} → abrió con <b style={{color:C.danger}}>#{a.comanda_ingresada}</b>{a.diferencia>0?` (faltan ${a.diferencia})`:a.diferencia<0?" (número repetido o hacia atrás)":""}</span>
+            <button style={{...css.btn("neutral"),padding:"4px 10px",fontSize:11}} onClick={()=>marcarAlertaVista(a.id)}>✓ Visto</button>
+          </div>)}
+        </div>}
+
+        {/* ══ MODAL CÓDIGO DE AUTORIZACIÓN (correlatividad) ══ */}
+        {modalAutorizacion&&<div style={css.modal}>
+          <div style={{...css.modalBox,maxWidth:420}} onClick={e=>e.stopPropagation()}>
+            <div style={{textAlign:"center",fontSize:40}}>🔒</div>
+            <div style={{textAlign:"center",fontWeight:900,fontSize:17,color:C.danger,marginBottom:4}}>La comanda no sigue la correlatividad</div>
+            <div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:8,padding:"12px 14px",margin:"12px 0",fontSize:13,lineHeight:1.6}}>
+              Última comanda: <b>#{modalAutorizacion.ultima?.num}</b> ({modalAutorizacion.ultima?.turno} {modalAutorizacion.ultima?.fecha})<br/>
+              Tendría que seguir: <b>#{(modalAutorizacion.ultima?.num||0)+1}</b><br/>
+              Ingresada: <b style={{color:C.danger}}>#{modalAutorizacion.comandaNum}</b>
+              {modalAutorizacion.diferencia>0&&<> · faltan <b style={{color:C.danger}}>{modalAutorizacion.diferencia}</b></>}
+              {modalAutorizacion.diferencia<0&&<> · <b style={{color:C.danger}}>número repetido o hacia atrás</b></>}
+            </div>
+            <div style={css.lbl}>Código de autorización del administrador</div>
+            <input style={{...css.input,width:"100%",boxSizing:"border-box",textAlign:"center",fontSize:20,letterSpacing:6,fontWeight:700}}
+              type="password" inputMode="numeric" maxLength={12} placeholder="••••" value={pinIngresado}
+              onChange={e=>{setPinIngresado(e.target.value);setPinError("");}} autoFocus/>
+            {pinError&&<div style={{color:C.danger,fontSize:12,marginTop:8,fontWeight:700}}>{pinError}</div>}
+            <div style={{display:"flex",gap:8,marginTop:14}}>
+              <button style={{...css.btn("neutral"),flex:1,padding:"12px"}} onClick={()=>{setModalAutorizacion(null);setPinIngresado("");setPinError("");}}>✕ Cancelar</button>
+              <button style={{...css.btn(),flex:1,padding:"12px",opacity:(!pinIngresado||pinVerificando)?0.4:1}} disabled={!pinIngresado||pinVerificando}
+                onClick={async()=>{
+                  setPinVerificando(true);
+                  const ok = await verificarPin(pinIngresado);
+                  setPinVerificando(false);
+                  if(ok){ const d=modalAutorizacion; setModalAutorizacion(null); setPinIngresado(""); await iniciarTurno(d, pinIngresado.length>4?"codigo_maestro":"pin_admin"); }
+                  else { setPinError("❌ Código incorrecto"); setPinIngresado(""); }
+                }}>{pinVerificando?"⏳ Verificando...":"🔓 Autorizar"}</button>
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginTop:10,textAlign:"center"}}>Queda registrado y le llega una alerta al administrador.</div>
+          </div>
+        </div>}
+
         {/* ══ NUEVA FACTURA ══ */}
-        {tab==="nueva"&&esVentas&&<>
-          <div style={css.card} className="fCard"><div style={css.cardTitle}>📋 Datos</div>
+        {tab==="nueva"&&esVentas&&!turnoActivo&&(()=>{
+          const ult = ultimaComandaAnterior(taFecha||hoy(), taTurno);
+          return <div style={{...css.card,border:`2px solid ${C.accent}`}} className="fCard">
+            <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>🕐 Abrir turno</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Estos datos se usan en todas las ventas del turno. La fecha es la de hoy, pero la podés cambiar.</div>
             <div style={css.row} className="fRow">
-              <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} className="fInput" type="date" value={nf.fecha} onChange={e=>setNf(p=>({...p,fecha:e.target.value}))}/></div>
-              <div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} className="fSel" value={nf.turno} onChange={e=>setNf(p=>({...p,turno:e.target.value}))}>{["Mañana","Noche"].map(t=><option key={t}>{t}</option>)}</select></div>
+              <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} className="fInput" type="date" value={taFecha} onChange={e=>setTaFecha(e.target.value)}/></div>
+              <div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} className="fSel" value={taTurno} onChange={e=>setTaTurno(e.target.value)}>{["Mañana","Noche"].map(t=><option key={t}>{t}</option>)}</select></div>
+              <div style={css.col}><div style={css.lbl}>Vendedor *</div><SelRapido opciones={vendedores} valor={taVendedor} onChange={setTaVendedor} placeholder="Vendedor..."/></div>
+              <div style={css.col}><div style={css.lbl}>🧾 N° primera comanda *</div>
+                <input style={{...css.input,borderColor:C.accent,fontWeight:700,fontSize:15}} className="fInput" type="number" inputMode="numeric" placeholder="Ej: 7978924" value={taComanda} onChange={e=>setTaComanda(e.target.value)}/>
+                {ult&&<div style={{fontSize:11,color:"#f59e0b",marginTop:4}}>Última comanda: <b>#{ult.num}</b> ({ult.turno} {ult.fecha}) → sigue la <b>#{ult.num+1}</b></div>}
+              </div>
+            </div>
+            <div style={{marginTop:16}}><button style={{...css.btn(),padding:"14px 28px",fontSize:15,width:"100%"}} className="fBtn" onClick={abrirTurno}>✅ Abrir turno</button></div>
+          </div>;
+        })()}
+
+        {tab==="nueva"&&esVentas&&turnoActivo&&<>
+          <div style={{background:"#0f2a0f",border:`1px solid ${C.success}`,borderRadius:10,padding:"10px 14px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontWeight:800,color:C.success,fontSize:14}}>🟢 Turno {turnoActivo.turno} · {turnoActivo.fecha}</div>
+              <div style={{fontSize:12,color:C.muted}}>Vendedor: <b style={{color:C.text}}>{turnoActivo.vendedor}</b> · Desde {turnoActivo.hora} · Comanda inicial <b style={{color:"#f59e0b"}}>#{turnoActivo.comandaInicial}</b></div>
+              {turnoActivo.motivoAutorizacion&&turnoActivo.motivoAutorizacion!=="normal"
+                ?<div style={{fontSize:11,color:C.danger,marginTop:2}}>⚠️ Abierto con código: no seguía la correlatividad (última #{turnoActivo.ultimaAnterior})</div>
+                :<div style={{fontSize:11,color:C.success,marginTop:2}}>✅ Correlatividad OK</div>}
+            </div>
+            <button style={{...css.btn("neutral"),padding:"8px 14px",fontSize:12}} onClick={cerrarTurno}>⏹ Cerrar turno</button>
+          </div>
+          {turnoActivo.inicio&&Date.now()-turnoActivo.inicio>14*60*60*1000&&<div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+            <div style={{fontWeight:800,color:"#f59e0b",marginBottom:4}}>⚠️ Este turno está abierto desde hace más de 14 horas</div>
+            <div style={{fontSize:12,color:C.muted}}>¿Quedó abierto de un día anterior? Cerralo y abrí el turno de hoy.</div>
+          </div>}
+          <div style={css.card} className="fCard"><div style={css.cardTitle}>📋 Datos del pedido</div>
+            <div style={css.row} className="fRow">
               <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={v=>setNf(p=>({...p,tipoVenta:v}))} placeholder="Tipo..."/></div>
-              <div style={css.col}><div style={css.lbl}>Vendedor *</div><SelRapido key={`ve-${nfReset}`} opciones={vendedores} valor={nf.vendedor} onChange={v=>setNf(p=>({...p,vendedor:v}))} placeholder="Vendedor..."/></div>
               {nf.tipoVenta==="Envio"&&<div style={css.col}><div style={css.lbl}>Cadete</div><SelRapido key={`ca-${nfReset}`} opciones={cadetes} valor={nf.cadete} onChange={v=>setNf(p=>({...p,cadete:v}))} placeholder="Cadete..."/></div>}
               <div style={css.col}><div style={css.lbl}>Cliente</div>
                 <div style={{position:"relative"}}>
@@ -1227,7 +1393,7 @@ export default function FoodiesApp() {
           </div>
           <div style={css.card} className="fCard"><div style={css.cardTitle}>📝 Notas</div>
             <textarea style={{...css.input,width:"100%",minHeight:60,resize:"vertical"}} placeholder="Observaciones..." value={nf.notas} onChange={e=>setNf(p=>({...p,notas:e.target.value}))}/>
-            <div style={{marginTop:14,textAlign:"right"}}><button style={{...css.btn(),padding:"12px 28px",fontSize:14,opacity:(!nf.vendedor||nf.items.length===0)?0.4:1}} className="fBtn" onClick={guardar} disabled={!nf.vendedor||nf.items.length===0}>💾 Guardar Factura</button></div>
+            <div style={{marginTop:14,textAlign:"right"}}><button style={{...css.btn(),padding:"12px 28px",fontSize:14,opacity:(nf.items.length===0)?0.4:1}} className="fBtn" onClick={guardar} disabled={nf.items.length===0}>💾 Guardar Factura</button></div>
           </div>
         </>}
 
