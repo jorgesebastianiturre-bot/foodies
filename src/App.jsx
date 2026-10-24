@@ -18,6 +18,7 @@ const gid = () => Math.random().toString(36).substr(2,9);
 const hoy = () => new Date().toLocaleDateString("en-CA");
 const turnoPorHora = () => new Date().getHours()<16?"Mañana":"Noche";
 const TURNO_KEY = "foodies_turno_activo";
+const normTxt = (s) => String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g," ").trim();
 const leerTurnoGuardado = () => { try { const t = localStorage.getItem(TURNO_KEY); return t ? JSON.parse(t) : null; } catch(e) { return null; } };
 const fmt = (n) => `$${Number(n||0).toLocaleString("es-AR")}`;
 const diasDesde = (fecha) => Math.floor((new Date()-new Date(fecha))/(1000*60*60*24));
@@ -258,6 +259,15 @@ export default function FoodiesApp() {
   const [pinError, setPinError] = useState("");
   const [pinVerificando, setPinVerificando] = useState(false);
   const [alertasCorr, setAlertasCorr] = useState([]);
+  const [selOpen, setSelOpen] = useState(false);
+  const selRef = useRef(null);
+  // Cerrar la lista de productos al tocar fuera
+  useEffect(()=>{
+    if(!selOpen) return;
+    const fuera = e=>{ if(selRef.current && !selRef.current.contains(e.target)) setSelOpen(false); };
+    document.addEventListener("pointerdown", fuera);
+    return ()=>document.removeEventListener("pointerdown", fuera);
+  },[selOpen]);
   const [selProd, setSelProd] = useState(""); const [selQty, setSelQty] = useState(""); const [selPrecio, setSelPrecio] = useState(""); const [selBusq, setSelBusq] = useState("");
   // Buscador cliente en factura
   const [nfCliBusq, setNfCliBusq] = useState(""); const [nfCliOpen, setNfCliOpen] = useState(false);
@@ -542,6 +552,32 @@ export default function FoodiesApp() {
 
   // ── VENTAS LOGIC ──
   const prodsActivos = productos.filter(p=>p.activo);
+  // ── Buscador de productos: parcial, sin importar espacios, tildes ni mayúsculas ──
+  // Los más vendidos aparecen primero cuando empatan.
+  const ventasPorProd = (()=>{ const m={}; facturas.forEach(f=>(f.items||[]).forEach(i=>{ m[i.prodId]=(m[i.prodId]||0)+(i.qty||1); })); return m; })();
+  const buscarProductos = (q) => {
+    const qn = normTxt(q); if(!qn) return [];
+    const toks = qn.split(" "); const qc = qn.replace(/ /g,"");
+    const res = [];
+    for(const p of prodsActivos){
+      const n = normTxt(p.nombre); const nc = n.replace(/ /g,""); const words = n.split(" ");
+      let score = 0;
+      if(nc.startsWith(qc)) score = 100;                                         // "sandmi" → Sand Mila...
+      else if(toks.every(t=>words.some(w=>w.startsWith(t)))) score = 80;        // "mila esp" → Sand Mila Especial
+      else if(nc.includes(qc)) score = 60;                                       // "milaesp"
+      else if(toks.every(t=>n.includes(t))) score = 50;                          // pedazos sueltos
+      else if(qc.length>=3 && words.some(w=>w[0]===qc[0])) {                     // abreviaturas: "sme" → Sand Mila Especial
+        let i=0; for(const ch of nc){ if(ch===qc[i]) i++; if(i===qc.length) break; }
+        if(i===qc.length) score = 20;
+      }
+      if(score>0) res.push({p, score});
+    }
+    return res.sort((a,b)=>b.score-a.score || (ventasPorProd[b.p.id]||0)-(ventasPorProd[a.p.id]||0) || a.p.nombre.length-b.p.nombre.length).map(r=>r.p);
+  };
+  const elegirProducto = (p) => {
+    setSelProd(p.id); setSelBusq(p.nombre); setSelPrecio(String(p.precio)); setSelOpen(false);
+    try { document.activeElement?.blur(); } catch(e) {} // baja el teclado para ver la factura
+  };
   const totalItems = nf.items.reduce((s,i)=>s+i.precio*i.qty,0);
   const totalPagos = (parseFloat(nf.importe1)||0)+(parseFloat(nf.importe2)||0);
   const dif = totalItems - totalPagos;
@@ -1072,7 +1108,7 @@ export default function FoodiesApp() {
   .fInput,.fSel{font-size:16px!important;padding:13px 14px!important;height:50px!important}
   .fBtn{min-height:48px!important;font-size:14px!important;padding:12px 18px!important;width:100%}
   .fBtnInline{min-height:48px!important;font-size:14px!important;padding:12px 18px!important}
-  .fDropdown{max-height:300px!important}
+  .fDropdown{max-height:45vh!important}
   .fDropItem{padding:15px 16px!important;font-size:14px!important;min-height:56px!important;display:flex!important;align-items:center!important;justify-content:space-between!important}
   .fGrid{grid-template-columns:repeat(2,1fr)!important}
   .fTableWrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch}
@@ -1097,6 +1133,7 @@ export default function FoodiesApp() {
 .fBnavBadge{position:absolute;top:5px;right:calc(50% - 20px);background:#ef4444;color:#fff;border-radius:999px;font-size:9px;font-weight:800;padding:1px 5px;line-height:1.2}
 .fQCats{display:none;gap:8px;padding:6px 0 2px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;flex-shrink:0}
 .fQCats::-webkit-scrollbar{display:none}
+@media (hover:hover){.fDropHover:hover{background:#2a2a2a}}
 .fQCat{flex-shrink:0;padding:8px 14px;border-radius:999px;border:none;background:#252525;color:#737373;font-size:13px;font-weight:700;cursor:pointer;font-family:'Sora',sans-serif;white-space:nowrap;min-height:38px}
 .fQCat.active{background:#f97316;color:#fff}
 `}</style>
@@ -1339,24 +1376,31 @@ export default function FoodiesApp() {
             <div className="fQCats">
               {[{l:"🥩 Milanesas",q:"mila"},{l:"🥪 Sándwiches",q:"sand"},{l:"🍕 Pizzas",q:"pizza"},{l:"🥟 Empanadas",q:"empan"},{l:"🍟 Papas",q:"papa"},{l:"🥤 Bebidas",q:"coca"}].map(cat=>(
                 <button key={cat.q} className={`fQCat${selBusq===cat.q?" active":""}`}
-                  onClick={()=>{if(selBusq===cat.q){setSelBusq("");setSelProd("");setSelPrecio("");}else{setSelBusq(cat.q);setSelProd("");setSelPrecio("");}}}>
+                  onClick={()=>{if(selBusq===cat.q){setSelBusq("");setSelProd("");setSelPrecio("");setSelOpen(false);}else{setSelBusq(cat.q);setSelProd("");setSelPrecio("");setSelOpen(true);}}}>
                   {cat.l}
                 </button>
               ))}
             </div>
             <div style={css.row} className="fRow">
-              <div style={{...css.col,position:"relative"}}><div style={css.lbl}>Buscar producto</div>
-                <input style={css.input} className="fInput" placeholder="Ej: lomito, pizza, coca..." value={selBusq} onChange={e=>{setSelBusq(e.target.value);setSelProd("");setSelPrecio("");}} autoComplete="off"/>
-                {selBusq.length>0&&selProd===""&&(()=>{
-                  const palabras=selBusq.toLowerCase().split(/\s+/).filter(Boolean);
-                  const filtrados=prodsActivos.filter(p=>palabras.every(w=>p.nombre.toLowerCase().includes(w)));
+              <div ref={selRef} style={{...css.col,position:"relative"}}><div style={css.lbl}>Buscar producto</div>
+                <div style={{position:"relative"}}>
+                  <input style={{...css.input,width:"100%",boxSizing:"border-box",paddingRight:36}} className="fInput" placeholder="Ej: sand mila, pizza esp, coca..." value={selBusq}
+                    onChange={e=>{setSelBusq(e.target.value);setSelProd("");setSelPrecio("");setSelOpen(true);}}
+                    onFocus={()=>{ if(selBusq&&!selProd) setSelOpen(true); }}
+                    onKeyDown={e=>{ if(e.key==="Enter"){ const r=buscarProductos(selBusq); if(r.length){ e.preventDefault(); elegirProducto(r[0]); } } if(e.key==="Escape") setSelOpen(false); }}
+                    autoComplete="off" enterKeyHint="done"/>
+                  {selBusq&&<button type="button" aria-label="Borrar búsqueda" style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:6}}
+                    onClick={()=>{setSelBusq("");setSelProd("");setSelPrecio("");setSelOpen(false);}}>✕</button>}
+                </div>
+                {selOpen&&selBusq.length>0&&selProd===""&&(()=>{
+                  const filtrados=buscarProductos(selBusq);
                   return(
-                  <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:100,maxHeight:220,overflowY:"auto"}} className="fDropdown">
-                    {filtrados.slice(0,14).map(p=>(
-                      <div key={p.id} className="fDropItem" style={{padding:"10px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`}}
-                        onClick={()=>{setSelProd(p.id);setSelBusq(p.nombre);setSelPrecio(String(p.precio));}}
-                        onMouseEnter={e=>e.currentTarget.style.background="#2a2a2a"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                        <span>{p.nombre}</span><span style={{color:C.accent,fontWeight:800,fontSize:14}}>{fmt(p.precio)}</span>
+                  <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:8,zIndex:100,maxHeight:"45vh",overflowY:"auto",overscrollBehavior:"contain",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 24px #000b"}} className="fDropdown">
+                    {filtrados.length>0&&<div style={{padding:"6px 14px",fontSize:11,color:C.muted,borderBottom:`1px solid ${C.border}`}}>{filtrados.length} producto{filtrados.length!==1?"s":""} · tocá uno para elegirlo</div>}
+                    {filtrados.map(p=>(
+                      <div key={p.id} className="fDropItem fDropHover" style={{padding:"10px 14px",cursor:"pointer",fontSize:13,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",gap:10}}
+                        onClick={()=>elegirProducto(p)}>
+                        <span>{p.nombre}</span><span style={{color:C.accent,fontWeight:800,fontSize:14,whiteSpace:"nowrap"}}>{fmt(p.precio)}</span>
                       </div>
                     ))}
                     {filtrados.length===0&&<div style={{padding:"12px 14px",color:C.muted,fontSize:13}}>Sin resultados</div>}
