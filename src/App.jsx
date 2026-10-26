@@ -320,7 +320,9 @@ export default function FoodiesApp() {
   const [nfCliNew, setNfCliNew] = useState(false); const [nfCliNewTel, setNfCliNewTel] = useState(""); const [nfCliNewApe, setNfCliNewApe] = useState("");
   const [nfReset, setNfReset] = useState(0); // key para resetear SelRapido al emitir
   const [nfCliIdx, setNfCliIdx] = useState(0);
-  const [masOpen, setMasOpen] = useState(false); // menú "Más" de la barra inferior del celular
+  const [masOpen, setMasOpen] = useState(false);
+  const [nfOk, setNfOk] = useState(""); // aviso "factura guardada"
+  const guardandoNf = useRef(false); // menú "Más" de la barra inferior del celular
   // ── Impresión de factura ──
   const DATOS_LOCAL_DEF = {nombre:"FOODIES LK", direccion:"San Luis", telefono:"", instagram:"", cuit:""};
   const [datosLocal, setDatosLocal] = useState(DATOS_LOCAL_DEF);
@@ -884,6 +886,11 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const guardar = async () => {
     if(!turnoActivo) { alert("Primero abrí el turno."); return; }
     if(nf.items.length===0) return;
+    if(guardandoNf.current) return; // evita guardar dos veces con doble Enter/toque
+    guardandoNf.current = true;
+    try { await guardarFactura(); } finally { guardandoNf.current = false; }
+  };
+  const guardarFactura = async () => {
     // Fecha, turno y vendedor salen de la apertura del turno
     nf.fecha = turnoActivo.fecha; nf.turno = turnoActivo.turno; nf.vendedor = turnoActivo.vendedor;
     // Verificar si el turno ya está cerrado
@@ -917,7 +924,14 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
       medio_pago1:f.medioPago1, importe1:f.importe1, medio_pago2:f.medioPago2, importe2:f.importe2,
       transfer_confirmada:f.transferConfirmada, total:f.total, notas:f.notas, estado:f.estado });
     await supabase.from("factura_items").insert(nf.items.map(i=>({id:i.id,factura_id:id,prod_id:i.prodId,nombre:i.nombre,precio:i.precio,qty:i.qty})));
-    setFacturas(prev=>[f,...prev]); setNf(emptyNf()); setNfCliBusq(""); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel(""); setNfReset(r=>r+1); setTab("historial");
+    setFacturas(prev=>[f,...prev]); setNf(emptyNf()); setNfCliBusq(""); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel(""); setNfReset(r=>r+1);
+    // Se queda en la carga de facturas, lista para la siguiente (antes saltaba al historial)
+    setSelBusq(""); setSelProd(""); setSelQty(""); setSelPrecio("");
+    setNfOk(`✅ Factura ${f.numero} guardada${f.comanda&&f.comanda!=="—"?" · comanda #"+f.comanda:""} · ${fmt(f.total)}`);
+    setTimeout(()=>setNfOk(""), 5000);
+    try { window.scrollTo({top:0,behavior:"smooth"}); } catch(e) {}
+    // En la compu el cursor vuelve a Tipo de venta; en el celular no (abriría el teclado solo)
+    try { if(window.matchMedia("(hover: hover)").matches) irA("nf-tipo"); } catch(e) {}
   };
 
   const confirmarTransfer = async (id) => {
@@ -1844,6 +1858,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             <div style={{fontWeight:800,color:"#f59e0b",marginBottom:4}}>⚠️ Este turno está abierto desde hace más de 14 horas</div>
             <div style={{fontSize:12,color:C.muted}}>¿Quedó abierto de un día anterior? Cerralo y abrí el turno de hoy.</div>
           </div>}
+          {nfOk&&<div style={{background:"#14532d",border:`1px solid ${C.success}`,color:"#dcfce7",borderRadius:10,padding:"12px 14px",marginBottom:10,fontWeight:700,fontSize:14}}>{nfOk}</div>}
           <div style={css.card} className="fCard"><div style={css.cardTitle}>📋 Datos del pedido</div>
             <div style={css.row} className="fRow">
               <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido id="nf-tipo" key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={cambiarTipoVenta} onEnter={v=>irA(normTxt(v)==="envio"?"nf-cadete":"nf-cliente")} placeholder="Salón, envío, mostrador..."/></div>
