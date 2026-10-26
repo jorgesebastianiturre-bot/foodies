@@ -153,6 +153,69 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
   const totalAdelantos = adelantos.reduce((s,m)=>s+m.monto,0);
   const neto = bruto-totalConsumos-totalAdelantos;
   const fmtR = (n)=>`$${Number(n||0).toLocaleString("es-AR")}`;
+  const [enviando, setEnviando] = useState(false);
+  const telEmp = emp.telefono || emp.telefonoAlt || "";
+  const fFecha = (f)=> f ? f.split("-").reverse().join("/") : "";
+  const periodo = `${desde?fFecha(desde):"inicio"} al ${fFecha(hasta||hoy())}`;
+
+  // Arma el recibo en PDF (con el logo) para compartirlo
+  const generarPdfRecibo = async () => {
+    const { jsPDF } = await import("jspdf");
+    const autoTable = (await import("jspdf-autotable")).default;
+    const doc = new jsPDF({ unit:"mm", format:"a4" });
+    doc.setFillColor(12,10,9); doc.rect(0,0,210,34,"F");
+    try { doc.addImage(LOGO_FOODIES,"JPEG",10,5,24,24); } catch(e) {}
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(20); doc.text("FOODIES LK",40,16);
+    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(214,211,209); doc.text("Liquidación de haberes",40,23);
+    doc.setFillColor(220,38,38); doc.rect(0,34,210,1.6,"F");
+    doc.setTextColor(28,25,23); doc.setFont("helvetica","bold"); doc.setFontSize(14); doc.text(emp.nombre||"",14,47);
+    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(87,83,78);
+    doc.text(`${emp.rol||""}${emp.dni?"  ·  DNI "+emp.dni:""}  ·  Período: ${periodo}`,14,53);
+    const est = { theme:"striped", styles:{fontSize:9}, headStyles:{fillColor:[12,10,9],textColor:255}, footStyles:{fillColor:[254,242,242],textColor:[153,27,27],fontStyle:"bold"}, margin:{left:14,right:14} };
+    let y = 60;
+    if(horasFilt.length){
+      autoTable(doc,{...est, startY:y, head:[["Fecha","Turno","Entrada","Salida","Horas","Subtotal"]],
+        body: horasFilt.slice().sort((a,b)=>a.fecha.localeCompare(b.fecha)).map(h=>[fFecha(h.fecha),h.turno||"",h.horaEntrada||"",h.horaSalida||"",h.horas+" hs",fmtR(h.horas*(parseFloat(emp.valorHora)||0))]),
+        foot:[["Total","","","",totalHoras.toFixed(1)+" hs",fmtR(bruto)]]});
+      y = doc.lastAutoTable.finalY + 6;
+    }
+    [["Consumos",consumos,totalConsumos],["Adelantos",adelantos,totalAdelantos]].forEach(([tit,lista,tot])=>{
+      if(!lista.length) return;
+      autoTable(doc,{...est, startY:y, head:[[tit,"Fecha","Monto"]],
+        body: lista.map(m=>[m.descripcion||"—",fFecha(m.fecha),"- "+fmtR(m.monto)]),
+        foot:[["Total "+tit.toLowerCase(),"","- "+fmtR(tot)]]});
+      y = doc.lastAutoTable.finalY + 6;
+    });
+    doc.setFillColor(12,10,9); doc.roundedRect(110,y,86,22,3,3,"F");
+    doc.setTextColor(168,162,158); doc.setFontSize(8); doc.text("NETO A PERCIBIR",192,y+7,{align:"right"});
+    doc.setTextColor(239,68,68); doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.text(fmtR(neto),192,y+17,{align:"right"});
+    doc.setFont("helvetica","normal"); doc.setTextColor(87,83,78); doc.setFontSize(9);
+    doc.text(`Bruto ${fmtR(bruto)}  -  Consumos ${fmtR(totalConsumos)}  -  Adelantos ${fmtR(totalAdelantos)}`,14,y+12);
+    const yf = Math.min(y+50, 280);
+    doc.setDrawColor(170); doc.line(20,yf,85,yf); doc.line(125,yf,190,yf);
+    doc.setFontSize(9); doc.text("Firma empleado",52.5,yf+5,{align:"center"}); doc.text("Firma empleador",157.5,yf+5,{align:"center"});
+    return doc;
+  };
+  const nombreArchivo = `Recibo ${emp.nombre} ${periodo}.pdf`.replace(/[\\/:*?"<>|]/g,"-");
+  const descargarPdf = async () => { setEnviando(true); try { (await generarPdfRecibo()).save(nombreArchivo); } catch(e){ alert("No se pudo generar el PDF: "+e.message); } finally { setEnviando(false); } };
+  // Celular: abre "Compartir" con el PDF adjunto (se elige WhatsApp y el contacto).
+  // Compu: descarga el PDF y abre el chat de WhatsApp del empleado para adjuntarlo.
+  const enviarPorWhatsApp = async () => {
+    setEnviando(true);
+    try {
+      const doc = await generarPdfRecibo();
+      const file = new File([doc.output("blob")], nombreArchivo, {type:"application/pdf"});
+      const texto = `Hola ${(emp.nombre||"").split(" ")[0]}! Te paso tu recibo de Foodies LK (${periodo}). Neto a percibir: ${fmtR(neto)}.`;
+      if(navigator.canShare && navigator.canShare({files:[file]})) {
+        await navigator.share({ files:[file], title:"Recibo "+emp.nombre, text:texto });
+      } else {
+        doc.save(nombreArchivo);
+        if(telWhatsApp(telEmp)) abrirWhatsApp(telEmp, texto+" Te adjunto el PDF.");
+        else alert("Se descargó el PDF. "+emp.nombre+" no tiene teléfono cargado: agregalo en Empleados para abrir su WhatsApp.");
+      }
+    } catch(e) { if(e && e.name!=="AbortError") alert("No se pudo enviar el recibo: "+e.message); }
+    finally { setEnviando(false); }
+  };
 
   const imprimir = () => {
     const w = window.open("","_blank");
@@ -224,7 +287,12 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
             <div style={{background:C.accent+"22",borderRadius:8,padding:"8px 12px"}}><div style={{fontSize:10,color:C.muted}}>NETO A PERCIBIR</div><div style={{fontWeight:800,fontSize:18,color:C.accent}}>{fmtR(neto)}</div></div>
           </div>
         </div>
-        <div style={{textAlign:"right"}}><button style={{...css.btn(),padding:"10px 24px"}} onClick={imprimir}>🖨️ Imprimir / PDF</button></div>
+        <div style={{fontSize:12,color:telWhatsApp(telEmp)?C.muted:C.warn,marginBottom:8}}>{telWhatsApp(telEmp)?`📱 WhatsApp de ${emp.nombre}: ${telEmp}`:`⚠️ ${emp.nombre} no tiene teléfono cargado. Agregalo en Empleados para mandarle el recibo por WhatsApp.`}</div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
+          <button style={{...css.btn("neutral"),padding:"10px 16px"}} onClick={imprimir}>🖨️ Imprimir</button>
+          <button style={{...css.btn("neutral"),padding:"10px 16px",opacity:enviando?0.5:1}} disabled={enviando} onClick={descargarPdf}>⬇️ Descargar PDF</button>
+          <button style={{...css.btn("success"),background:"#16a34a",padding:"10px 18px",opacity:enviando?0.5:1}} disabled={enviando} onClick={enviarPorWhatsApp}>{enviando?"⏳ Armando PDF...":"💬 Enviar por WhatsApp"}</button>
+        </div>
       </div>
     </div>
   );
@@ -417,6 +485,8 @@ export default function FoodiesApp() {
   const [estadosDia, setEstadosDia] = useState([]); // {id,empleadoId,fecha,estado,obs}
   const [semanaOffset, setSemanaOffset] = useState(0); // 0=esta semana, -1=anterior, etc
   const [filtEmpSemana, setFiltEmpSemana] = useState(""); // filtro por empleado en vista semanal
+  const [phEmp, setPhEmp] = useState(""); const [phDesde, setPhDesde] = useState(""); const [phHasta, setPhHasta] = useState(""); // filtros historial de turnos
+  const [editPers, setEditPers] = useState(null); // edición de un turno o de un adelanto/consumo
   const [horaEdId, setHoraEdId] = useState(null); const [horaEdHoras, setHoraEdHoras] = useState(""); const [horaEdObs, setHoraEdObs] = useState("");
   // Pérdidas y Mermas
   const [perdidas, setPerdidas] = useState([]);
@@ -1504,6 +1574,25 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
     setMovimientosPersonal(prev=>[mov,...prev]); setMovMonto(""); setMovDesc("");
   };
 
+  // Editar un turno registrado o un adelanto/consumo (se guarda en la base y se refleja en el recibo)
+  const guardarEdicionPers = async () => {
+    const e = editPers; if(!e) return;
+    if(e.kind==="hora"){
+      if(!e.empleadoId||!e.horaEntrada||!e.horaSalida){ alert("Completá empleado, entrada y salida."); return; }
+      const horas = calcularHoras(e.horaEntrada, e.horaSalida);
+      const { error } = await supabase.from("horas_trabajo").update({empleado_id:e.empleadoId,fecha:e.fecha,turno:e.turno,hora_entrada:e.horaEntrada,hora_salida:e.horaSalida,horas,obs:e.obs||""}).eq("id",e.id);
+      if(error){ alert("No se pudo guardar: "+error.message); return; }
+      setHorasTrabajo(prev=>prev.map(x=>x.id===e.id?{...x,empleadoId:e.empleadoId,fecha:e.fecha,turno:e.turno,horaEntrada:e.horaEntrada,horaSalida:e.horaSalida,horas,obs:e.obs||""}:x));
+    } else {
+      const monto = parseFloat(e.monto);
+      if(!e.empleadoId||!monto){ alert("Completá empleado y monto."); return; }
+      const { error } = await supabase.from("movimientos_personal").update({empleado_id:e.empleadoId,tipo:e.tipo,monto,fecha:e.fecha,descripcion:e.descripcion||""}).eq("id",e.id);
+      if(error){ alert("No se pudo guardar: "+error.message); return; }
+      setMovimientosPersonal(prev=>prev.map(x=>x.id===e.id?{...x,empleadoId:e.empleadoId,tipo:e.tipo,monto,fecha:e.fecha,descripcion:e.descripcion||""}:x));
+    }
+    setEditPers(null);
+  };
+
   const eliminarMovimiento = async (id) => {
     if(!esAdmin||!window.confirm("¿Eliminar?")) return;
     await supabase.from("movimientos_personal").delete().eq("id",id);
@@ -1672,7 +1761,7 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const cierresFilt = cierres.filter(c=>(!ccFDesde||c.fecha>=ccFDesde)&&(!ccFHasta||c.fecha<=ccFHasta))
     .sort((a,b)=>((b.fecha||"")+(b.turno==="Noche"?"2":"1")).localeCompare((a.fecha||"")+(a.turno==="Noche"?"2":"1")));
   // Filtro personal
-  const movsVista = movimientosPersonal.filter(m=>(!filtEmp||m.empleadoId===filtEmp)&&(!filtTipoMov||m.tipo===filtTipoMov)&&(!filtMovDesde||m.fecha>=filtMovDesde)&&(!filtMovHasta||m.fecha<=filtMovHasta));
+  const movsVista = movimientosPersonal.filter(m=>(!filtEmp||m.empleadoId===filtEmp)&&(!filtTipoMov||m.tipo===filtTipoMov)&&(!filtMovDesde||m.fecha>=filtMovDesde)&&(!filtMovHasta||m.fecha<=filtMovHasta)).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
   const pf = productos.filter(p=>p.nombre.toLowerCase().includes(bProd.toLowerCase()));
   const cf = clientes.filter(c=>(c.nombre+" "+c.apellido).toLowerCase().includes(bCli.toLowerCase()));
   const comprasFiltradas = compras.filter(c=>[c.numero,c.proveedor,c.nroFactura,c.tipoFactura].join(" ").toLowerCase().includes(bCompras.toLowerCase()));
@@ -1887,6 +1976,32 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             <div style={{textAlign:"center",fontWeight:900,fontSize:18,color:C.danger,marginBottom:10}}>Hay transferencias de turnos anteriores sin confirmar</div>
             {avisoTransfPend(transfPendAnteriores, "Pendientes")}
             <button style={{...css.btn("neutral"),width:"100%",padding:12}} onClick={()=>setModalTransfAviso(false)}>Entendido, las reviso</button>
+          </div>
+        </div>}
+
+        {/* ══ MODAL EDITAR TURNO / ADELANTO / CONSUMO ══ */}
+        {editPers&&<div style={css.modal} onClick={()=>setEditPers(null)}>
+          <div style={{...css.modalBox,maxWidth:480}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:900,fontSize:17,marginBottom:12}}>✏️ Editar {editPers.kind==="hora"?"turno trabajado":"adelanto / consumo"}</div>
+            <div style={{marginBottom:10}}><div style={css.lbl}>Personal</div><select style={{...css.sel,width:"100%"}} value={editPers.empleadoId} onChange={e=>setEditPers(p=>({...p,empleadoId:e.target.value}))}>{empleados.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
+            <div style={css.row}>
+              <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} type="date" value={editPers.fecha} onChange={e=>setEditPers(p=>({...p,fecha:e.target.value}))}/></div>
+              {editPers.kind==="hora"
+                ?<div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} value={editPers.turno} onChange={e=>setEditPers(p=>({...p,turno:e.target.value}))}><option>Mañana</option><option>Tarde</option><option>Noche</option></select></div>
+                :<div style={css.col}><div style={css.lbl}>Tipo</div><select style={css.sel} value={editPers.tipo} onChange={e=>setEditPers(p=>({...p,tipo:e.target.value}))}><option value="adelanto">💰 Adelanto</option><option value="consumo">🛒 Consumo</option></select></div>}
+            </div>
+            {editPers.kind==="hora"
+              ?<div style={css.row}>
+                <div style={css.col}><div style={css.lbl}>Entrada</div><input style={css.input} type="time" value={editPers.horaEntrada} onChange={e=>setEditPers(p=>({...p,horaEntrada:e.target.value}))}/></div>
+                <div style={css.col}><div style={css.lbl}>Salida</div><input style={css.input} type="time" value={editPers.horaSalida} onChange={e=>setEditPers(p=>({...p,horaSalida:e.target.value}))}/></div>
+                <div style={css.col}><div style={css.lbl}>Total</div><div style={{padding:"8px 11px",fontWeight:800,color:C.accent}}>{calcularHoras(editPers.horaEntrada,editPers.horaSalida)} hs</div></div>
+              </div>
+              :<div style={css.row}><div style={css.col}><div style={css.lbl}>Monto ($)</div><input style={css.input} type="number" value={editPers.monto} onChange={e=>setEditPers(p=>({...p,monto:e.target.value}))}/></div></div>}
+            <div style={{marginBottom:10}}><div style={css.lbl}>{editPers.kind==="hora"?"Observaciones":"Descripción"}</div><input style={{...css.input,width:"100%",boxSizing:"border-box"}} value={editPers.kind==="hora"?editPers.obs:editPers.descripcion} onChange={e=>setEditPers(p=>p.kind==="hora"?{...p,obs:e.target.value}:{...p,descripcion:e.target.value})}/></div>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...css.btn("neutral"),flex:1,padding:12}} onClick={()=>setEditPers(null)}>Cancelar</button>
+              <button style={{...css.btn(),flex:2,padding:12}} onClick={guardarEdicionPers}>💾 Guardar cambios</button>
+            </div>
           </div>
         </div>}
 
@@ -2628,7 +2743,6 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               {k:"empleados",l:"👤 Empleados"},
               {k:"horas",l:"⏱ Registrar Horas"},
               {k:"movimientos",l:"💸 Adelantos / Consumos"},
-              {k:"semana",l:"📅 Vista Semanal"},
               ...(esAdmin?[{k:"resumen",l:"📊 Resumen & Recibos"}]:[]),
             ].map(t=>(<button key={t.k} style={{...css.btn(personalTab===t.k?"primary":"neutral"),fontSize:12}} onClick={()=>setPersonalTab(t.k)}>{t.l}</button>))}
           </div>
@@ -2692,10 +2806,23 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               </div>
             </div>
             <div style={css.card}><div style={css.cardTitle}>📋 Historial de Turnos</div>
+              <div style={{background:"#111",borderRadius:9,padding:10,marginBottom:12}}>
+                <div style={css.row}>
+                  <div style={css.col}><div style={css.lbl}>Personal</div><select style={css.sel} value={phEmp} onChange={e=>setPhEmp(e.target.value)}><option value="">— Todos —</option>{empleados.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
+                  <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={phDesde} onChange={e=>setPhDesde(e.target.value)}/></div>
+                  <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={phHasta} onChange={e=>setPhHasta(e.target.value)}/></div>
+                  <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setPhEmp("");setPhDesde("");setPhHasta("");}}>✕</button></div>
+                </div>
+              </div>
+              {(()=>{ const conFiltro = phEmp||phDesde||phHasta;
+                const lista = horasTrabajo.filter(h=>(!phEmp||h.empleadoId===phEmp)&&(!phDesde||h.fecha>=phDesde)&&(!phHasta||h.fecha<=phHasta)).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+                const tH = lista.reduce((s,h)=>s+(parseFloat(h.horas)||0),0);
+                const tP = lista.reduce((s,h)=>{ const emp=empleados.find(e=>e.id===h.empleadoId); return s+(emp?(parseFloat(h.horas)||0)*(parseFloat(emp.valorHora)||0):0); },0);
+                return <div style={{fontSize:12,color:C.muted,marginBottom:8}}>{conFiltro?<>{lista.length} turno{lista.length!==1?"s":""} · <b style={{color:C.accent}}>{tH.toFixed(1)} hs</b>{esAdmin&&tP>0?<> · <b style={{color:C.text}}>{fmt(tP)}</b></>:null}</>:"Mostrando los últimos 60. Usá los filtros para buscar por personal y fechas."}</div>; })()}
               {horasTrabajo.length===0?<p style={{color:C.muted,textAlign:"center",padding:"24px"}}>Sin registros.</p>:
                 <div style={{overflowX:"auto"}}><table style={css.table}>
                   <thead><tr><th style={css.th}>Empleado</th><th style={css.th}>Fecha</th><th style={css.th}>Turno</th><th style={css.th}>Entrada</th><th style={css.th}>Salida</th><th style={css.th}>Horas</th><th style={css.th}>Subtotal</th><th style={css.th}>Obs.</th>{esAdmin&&<th style={css.th}></th>}</tr></thead>
-                  <tbody>{horasTrabajo.slice(0,60).map(h=>{
+                  <tbody>{(()=>{ const l=horasTrabajo.filter(h=>(!phEmp||h.empleadoId===phEmp)&&(!phDesde||h.fecha>=phDesde)&&(!phHasta||h.fecha<=phHasta)).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||"")); return (phEmp||phDesde||phHasta)?l:l.slice(0,60); })().map(h=>{
                     const emp=empleados.find(e=>e.id===h.empleadoId);
                     return <tr key={h.id}>
                       <td style={{...css.td,fontWeight:600}}>{emp?.nombre||"—"}</td>
@@ -2706,7 +2833,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                       <td style={css.td}><span style={{fontWeight:800,color:C.accent}}>{h.horas}hs</span></td>
                       <td style={css.td}>{emp&&emp.valorHora>0?<span style={{color:C.muted,fontSize:11}}>{fmt(h.horas*emp.valorHora)}</span>:"—"}</td>
                       <td style={{...css.td,color:C.muted}}>{h.obs||"—"}</td>
-                      {esAdmin&&<td style={css.td}><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarHoras(h.id)}>🗑</button></td>}
+                      {esAdmin&&<td style={css.td}><div style={{display:"flex",gap:5}}><button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>setEditPers({kind:"hora",id:h.id,empleadoId:h.empleadoId,fecha:h.fecha,turno:h.turno||"Noche",horaEntrada:h.horaEntrada||"",horaSalida:h.horaSalida||"",obs:h.obs||""})}>✏️</button><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarHoras(h.id)}>🗑</button></div></td>}
                     </tr>;
                   })}</tbody>
                 </table></div>}
@@ -2724,7 +2851,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                 <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn()} onClick={guardarMovimiento}>✅ Registrar</button></div>
               </div>
             </div>
-            {esAdmin&&<div style={css.card}><div style={css.cardTitle}>🔍 Filtros</div>
+            <div style={css.card}><div style={css.cardTitle}>🔍 Buscar en el historial</div>
               <div style={css.row}>
                 <div style={css.col}><div style={css.lbl}>Empleado</div><select style={css.sel} value={filtEmp} onChange={e=>setFiltEmp(e.target.value)}><option value="">— Todos —</option>{empleados.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
                 <div style={css.col}><div style={css.lbl}>Tipo</div><select style={css.sel} value={filtTipoMov} onChange={e=>setFiltTipoMov(e.target.value)}><option value="">— Todos —</option><option value="adelanto">Adelanto</option><option value="consumo">Consumo</option></select></div>
@@ -2732,7 +2859,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                 <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={filtMovHasta} onChange={e=>setFiltMovHasta(e.target.value)}/></div>
                 <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setFiltEmp("");setFiltTipoMov("");setFiltMovDesde("");setFiltMovHasta("");}}>✕</button></div>
               </div>
-            </div>}
+              <div style={{fontSize:12,color:C.muted,marginTop:4}}>{movsVista.length} movimiento{movsVista.length!==1?"s":""} · Adelantos <b style={{color:C.warn}}>{fmt(movsVista.filter(m=>m.tipo==="adelanto").reduce((s,m)=>s+m.monto,0))}</b> · Consumos <b style={{color:C.info}}>{fmt(movsVista.filter(m=>m.tipo==="consumo").reduce((s,m)=>s+m.monto,0))}</b> · Total <b style={{color:C.danger}}>{fmt(movsVista.reduce((s,m)=>s+m.monto,0))}</b></div>
+            </div>
             <div style={css.card}><div style={css.cardTitle}>📋 Historial de Movimientos</div>
               {movsVista.length===0?<p style={{color:C.muted,textAlign:"center",padding:"24px"}}>Sin movimientos.</p>:
                 <div style={{overflowX:"auto"}}><table style={css.table}>
@@ -2745,94 +2873,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                       <td style={{...css.td,fontWeight:700,color:C.danger}}>- {fmt(m.monto)}</td>
                       <td style={css.td}>{m.fecha}</td>
                       <td style={{...css.td,color:C.muted}}>{m.descripcion||"—"}</td>
-                      {esAdmin&&<td style={css.td}><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarMovimiento(m.id)}>🗑</button></td>}
+                      {esAdmin&&<td style={css.td}><div style={{display:"flex",gap:5}}><button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>setEditPers({kind:"mov",id:m.id,empleadoId:m.empleadoId,tipo:m.tipo,monto:String(m.monto),fecha:m.fecha,descripcion:m.descripcion||""})}>✏️</button><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarMovimiento(m.id)}>🗑</button></div></td>}
                     </tr>;
                   })}</tbody>
                 </table></div>}
             </div>
-          </>}
-
-          {personalTab==="semana"&&<>
-            {/* Navegación de semana */}
-            <div style={css.card}>
-              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                <button style={css.btn("neutral")} onClick={()=>setSemanaOffset(p=>p-1)}>← Anterior</button>
-                <button style={{...css.btn("neutral"),opacity:semanaOffset===0?0.4:1}} onClick={()=>setSemanaOffset(0)} disabled={semanaOffset===0}>Semana actual</button>
-                <button style={css.btn("neutral")} onClick={()=>setSemanaOffset(p=>p+1)}>Siguiente →</button>
-                <div style={{flex:1,textAlign:"center",fontWeight:800,color:C.accent,fontSize:14}}>
-                  {(()=>{const fs=getFechasSemana(semanaOffset);return `${fs[0].split("-").reverse().join("/")} — ${fs[6].split("-").reverse().join("/")}`;})()}
-                </div>
-                <div style={{...css.col,maxWidth:200}}>
-                  <select style={css.sel} value={filtEmpSemana} onChange={e=>setFiltEmpSemana(e.target.value)}>
-                    <option value="">— Todos los empleados —</option>
-                    {empleados.filter(e=>e.activo).map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Vista semanal por empleado */}
-            {empleados.filter(e=>e.activo&&(!filtEmpSemana||e.id===filtEmpSemana)).map(emp=>{
-              const fechas = getFechasSemana(semanaOffset);
-              const semInicio = fechas[0]; const semFin = fechas[6];
-              const semPago = semanaPersonal.find(s=>s.empleadoId===emp.id&&s.semanaInicio===semInicio);
-              const horasSem = horasTrabajo.filter(h=>h.empleadoId===emp.id&&h.fecha>=semInicio&&h.fecha<=semFin);
-              const totalHsSem = horasSem.reduce((s,h)=>s+h.horas,0);
-              const brutoSem = totalHsSem*(parseFloat(emp.valorHora)||0);
-              const movsSem = movimientosPersonal.filter(m=>m.empleadoId===emp.id&&m.fecha>=semInicio&&m.fecha<=semFin);
-              const adelantosSem = movsSem.filter(m=>m.tipo==="adelanto").reduce((s,m)=>s+m.monto,0);
-              const consumosSem = movsSem.filter(m=>m.tipo==="consumo").reduce((s,m)=>s+m.monto,0);
-              const netoSem = brutoSem - adelantosSem - consumosSem;
-
-              return <div key={emp.id} style={css.card}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-                  <div>
-                    <div style={{fontWeight:800,fontSize:15,color:C.accent}}>{emp.nombre}</div>
-                    <div style={{fontSize:11,color:C.muted}}>{emp.rol} {emp.valorHora>0?`— ${fmt(emp.valorHora)}/h`:""}</div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:11,color:C.muted}}>Horas: <b style={{color:C.accent}}>{totalHsSem}hs</b> | Bruto: <b style={{color:C.success}}>{fmt(brutoSem)}</b> | Neto: <b style={{color:C.warn}}>{fmt(netoSem)}</b></div>
-                    </div>
-                    {esAdmin&&(semPago?.pagado
-                      ?<span style={{...css.tag(C.success),fontSize:11}}>✅ Pagado {semPago.fechaPago?.split("-").reverse().join("/")}</span>
-                      :<button style={{...css.btn("success"),fontSize:11,padding:"5px 10px"}} onClick={async()=>{
-                        const obs = window.prompt(`Pago semana ${semInicio} — ${emp.nombre}
-Monto neto calculado: ${fmt(netoSem)}
-
-Ingresá observación (opcional):`, "");
-                        if(obs===null) return;
-                        await marcarSemanaPagada(emp.id, semInicio, semFin, netoSem, obs);
-                      }}>💰 Marcar Pagado</button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Días de la semana */}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
-                  {fechas.map((fecha,idx)=>{
-                    const estadoObj = getEstadoDia(emp.id, fecha);
-                    const estado = estadoObj?.estado||"normal";
-                    const horasDia = horasTrabajo.filter(h=>h.empleadoId===emp.id&&h.fecha===fecha);
-                    const totalHDia = horasDia.reduce((s,h)=>s+h.horas,0);
-                    const esFuturo = fecha > new Date().toISOString().split("T")[0];
-                    return <div key={fecha} style={{background:"#1a1a1a",borderRadius:8,padding:"8px 6px",border:`1px solid ${estado==="normal"&&totalHDia===0?"#333":colorEstadoDia(estado)}`,textAlign:"center",opacity:esFuturo?0.5:1}}>
-                      <div style={{fontSize:10,fontWeight:700,color:C.muted,marginBottom:3}}>{diasSemana[idx]}</div>
-                      <div style={{fontSize:10,color:"#888",marginBottom:4}}>{fecha.split("-").slice(1).reverse().join("/")}</div>
-                      {totalHDia>0&&<div style={{fontSize:12,fontWeight:800,color:C.accent,marginBottom:3}}>{totalHDia}hs</div>}
-                      {horasDia.map(h=><div key={h.id} style={{fontSize:9,color:C.muted}}>{h.horaEntrada||""}{h.horaEntrada&&h.horaSalida?" - ":""}{h.horaSalida||""}</div>)}
-                      {!esFuturo&&esAdmin&&<select style={{fontSize:9,background:"#111",color:"#fff",border:"none",borderRadius:4,width:"100%",marginTop:3,padding:"2px"}} value={estado} onChange={async e=>await setEstadoDiaFn(emp.id,fecha,e.target.value)}>
-                        <option value="normal">Normal</option>
-                        <option value="descanso">Descanso</option>
-                        <option value="falta">Falta</option>
-                        <option value="licencia">Licencia</option>
-                      </select>}
-                      {!esFuturo&&!esAdmin&&estado!=="normal"&&<div style={{fontSize:9,color:colorEstadoDia(estado),fontWeight:700,marginTop:3}}>{estado.charAt(0).toUpperCase()+estado.slice(1)}</div>}
-                    </div>;
-                  })}
-                </div>
-              </div>;
-            })}
           </>}
 
           {personalTab==="resumen"&&esAdmin&&<>
