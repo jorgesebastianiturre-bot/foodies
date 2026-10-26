@@ -45,6 +45,8 @@ const gid = () => Math.random().toString(36).substr(2,9);
 const hoy = () => new Date().toLocaleDateString("en-CA");
 const turnoPorHora = () => new Date().getHours()<16?"Mañana":"Noche";
 const TURNO_KEY = "foodies_turno_activo";
+// Avisos de transferencias sin confirmar: cuentan desde esta fecha en adelante (pedido el 26/10/2026)
+const TRANSF_ALERTA_DESDE = "2026-10-26";
 // WhatsApp: arma el número internacional de Argentina (549 + área + número, sin 0 ni 15)
 const telWhatsApp = (tel) => {
   let d = String(tel||"").replace(/\D/g,"");
@@ -340,6 +342,7 @@ export default function FoodiesApp() {
   const [nfCliIdx, setNfCliIdx] = useState(0);
   const [masOpen, setMasOpen] = useState(false);
   const [nfOk, setNfOk] = useState(""); // aviso "factura guardada"
+  const [modalTransfAviso, setModalTransfAviso] = useState(false); // aviso al abrir turno: transferencias anteriores sin confirmar
   const guardandoNf = useRef(false); // menú "Más" de la barra inferior del celular
   // ── Impresión de factura ──
   const DATOS_LOCAL_DEF = {nombre:"FOODIES LK", direccion:"San Luis", telefono:"", instagram:"", cuit:""};
@@ -794,6 +797,7 @@ export default function FoodiesApp() {
       motivoAutorizacion:motivo, ultimaAnterior:d.ultima?.num??null, diferencia:d.diferencia??null };
     guardarTurno(ta);
     setCierreFecha(d.fecha); setCierreTurno(d.turno);
+    if(pendAnterioresA(d.fecha, d.turno).length>0) setModalTransfAviso(true);
     setHfDesde(d.fecha); setHfHasta(d.fecha); setHfTurno(d.turno);
     irA("nf-tipo");
     setTaComanda(""); setTaVendedor("");
@@ -1340,6 +1344,8 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   };
 
   const guardarCierre = async () => {
+    const quedan = [...cierreTrPend, ...transfPendAntesCierre];
+    if(quedan.length>0 && !window.confirm(`⚠️ Quedan ${quedan.length} transferencia${quedan.length!==1?"s":""} SIN CONFIRMAR por ${fmt(quedan.reduce((s,f)=>s+montoTransfer(f),0))} (${cierreTrPend.length} de este turno y ${transfPendAntesCierre.length} de turnos anteriores).\n\n¿Cerrar la caja igual?`)) return;
     const id = gid();
     const esTurnoAbierto = turnoActivo&&turnoActivo.fecha===cierreFecha&&turnoActivo.turno===cierreTurno;
     const comandaInicial = esTurnoAbierto ? turnoActivo.comandaInicial : null;
@@ -1630,6 +1636,24 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const saldosCC = saldoPorCliente();
   const deudaTotalCC = saldosCC.reduce((s,x)=>s+(x.saldo>1?x.saldo:0),0);
   const transferPendientes = facturas.filter(f=>tieneTransfer(f)&&f.transferConfirmada===false);
+  // Transferencias sin confirmar de turnos ANTERIORES (desde TRANSF_ALERTA_DESDE)
+  const pendAnterioresA = (fecha, turno) => transferPendientes
+    .filter(f=>(f.fecha||"")>=TRANSF_ALERTA_DESDE && (!fecha || ordenTurno(f.fecha,f.turno) < ordenTurno(fecha,turno)))
+    .sort((a,b)=>ordenTurno(a.fecha,a.turno).localeCompare(ordenTurno(b.fecha,b.turno)));
+  const transfPendAnteriores = turnoActivo ? pendAnterioresA(turnoActivo.fecha, turnoActivo.turno) : pendAnterioresA(null,null);
+  const transfPendAntesCierre = pendAnterioresA(cierreFecha, cierreTurno);
+  // Cartel insistente con la lista y el botón para confirmar cada una
+  const avisoTransfPend = (lista, titulo) => lista.length===0 ? null : (
+    <div style={{background:"#3b0a0a",border:`2px solid ${C.danger}`,borderRadius:12,padding:"12px 14px",marginBottom:12}}>
+      <div style={{fontWeight:900,color:"#fca5a5",fontSize:15,marginBottom:4}}>🚨 {titulo}: {lista.length} transferencia{lista.length!==1?"s":""} sin confirmar · {fmt(lista.reduce((s,f)=>s+montoTransfer(f),0))}</div>
+      <div style={{fontSize:12,color:"#fecaca",marginBottom:8}}>Revisá en el banco o en Mercado Pago que hayan entrado y confirmalas. Este aviso no se va hasta que estén todas confirmadas.</div>
+      <div style={{maxHeight:220,overflowY:"auto"}}>
+        {lista.map(f=><div key={f.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"7px 0",borderTop:"1px solid #7f1d1d",fontSize:13,flexWrap:"wrap"}}>
+          <span>{fmtFecha(f.fecha)} · {f.turno} · {f.comanda&&f.comanda!=="—"?"#"+f.comanda+" · ":""}{f.cliente||"Sin cliente"} · <span style={{color:C.muted}}>{f.vendedor}</span></span>
+          <span style={{display:"flex",gap:8,alignItems:"center"}}><b style={{color:"#fca5a5"}}>{fmt(montoTransfer(f))}</b><button style={{...css.btn("success"),padding:"5px 10px",fontSize:11}} onClick={()=>confirmarTransfer(f.id)}>✅ Confirmar</button></span>
+        </div>)}
+      </div>
+    </div>);
   const transferConfirmadas = facturas.filter(f=>tieneTransfer(f)&&f.transferConfirmada===true);
 
   // Filtros CAMBIO 4 (historial)
@@ -1856,6 +1880,16 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           </div>
         </div>}
 
+        {/* ══ AVISO AL ABRIR TURNO: transferencias anteriores sin confirmar ══ */}
+        {modalTransfAviso&&transfPendAnteriores.length>0&&<div style={css.modal}>
+          <div style={{...css.modalBox,maxWidth:560}} onClick={e=>e.stopPropagation()}>
+            <div style={{textAlign:"center",fontSize:40}}>🔔</div>
+            <div style={{textAlign:"center",fontWeight:900,fontSize:18,color:C.danger,marginBottom:10}}>Hay transferencias de turnos anteriores sin confirmar</div>
+            {avisoTransfPend(transfPendAnteriores, "Pendientes")}
+            <button style={{...css.btn("neutral"),width:"100%",padding:12}} onClick={()=>setModalTransfAviso(false)}>Entendido, las reviso</button>
+          </div>
+        </div>}
+
         {/* ══ MODAL IMPRIMIR FACTURA ══ */}
         {modalImprimir&&<div style={css.modal} onClick={()=>setModalImprimir(null)}>
           <div style={{...css.modalBox,maxWidth:460}} onClick={e=>e.stopPropagation()}>
@@ -1879,6 +1913,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </div>}
 
         {/* ══ NUEVA FACTURA ══ */}
+        {tab==="nueva"&&esVentas&&!turnoActivo&&avisoTransfPend(pendAnterioresA(taFecha||hoy(), taTurno), "Turnos anteriores")}
         {tab==="nueva"&&esVentas&&!turnoActivo&&(()=>{
           const ult = ultimaComandaAnterior(taFecha||hoy(), taTurno);
           return <div style={{...css.card,border:`2px solid ${C.accent}`}} className="fCard">
@@ -1908,6 +1943,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             </div>
             <button style={{...css.btn("neutral"),padding:"8px 14px",fontSize:12}} onClick={cerrarTurno}>⏹ Cerrar turno</button>
           </div>
+          {avisoTransfPend(transfPendAnteriores, "De turnos anteriores")}
           {turnoActivo.inicio&&Date.now()-turnoActivo.inicio>14*60*60*1000&&<div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
             <div style={{fontWeight:800,color:"#f59e0b",marginBottom:4}}>⚠️ Este turno está abierto desde hace más de 14 horas</div>
             <div style={{fontSize:12,color:C.muted}}>¿Quedó abierto de un día anterior? Cerralo y abrí el turno de hoy.</div>
@@ -2142,6 +2178,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
         {/* ══ CIERRE DE CAJA — CAMBIO 1 ══ */}
         {tab==="caja"&&esVentas&&<>
+          {avisoTransfPend(transfPendAntesCierre, "De turnos anteriores a este cierre")}
           <div style={css.card}><div style={css.cardTitle}>💰 Cierre de Caja</div>
             <div style={css.row}>
               <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} type="date" value={cierreFecha} onChange={e=>setCierreFecha(e.target.value)}/></div>
