@@ -236,9 +236,9 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
     @media print{button{display:none}}</style></head><body>
     <h1>🍔 Foodies — Liquidación de Haberes</h1>
     <h2>${emp.nombre} · ${emp.rol} · Período: ${desde||"inicio"} al ${hasta||hoy()}</h2>
-    <table><thead><tr><th>Fecha</th><th>Horas</th><th>Valor/h</th><th>Subtotal</th></tr></thead>
-    <tbody>${horasFilt.map(h=>`<tr><td>${fechaDia(h.fecha)}</td><td>${h.horas}hs</td><td>${fmtR(emp.valorHora)}</td><td>${fmtR(h.horas*emp.valorHora)}</td></tr>`).join("")}
-    <tr class="tr"><td colspan="2"><b>Total ${totalHoras.toFixed(1)} horas</b></td><td></td><td><b>${fmtR(bruto)}</b></td></tr></tbody></table>
+    <table><thead><tr><th>Fecha</th><th>Turno</th><th>Entrada</th><th>Salida</th><th>Horas</th><th>Valor/h</th><th>Subtotal</th></tr></thead>
+    <tbody>${horasFilt.slice().sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map(h=>`<tr><td>${fechaDia(h.fecha)}</td><td>${h.turno||"—"}</td><td>${h.horaEntrada||"—"}</td><td>${h.horaSalida||"—"}</td><td>${h.horas}hs</td><td>${fmtR(emp.valorHora)}</td><td>${fmtR(h.horas*emp.valorHora)}</td></tr>`).join("")}
+    <tr class="tr"><td colspan="5"><b>Total ${totalHoras.toFixed(1)} horas</b></td><td></td><td><b>${fmtR(bruto)}</b></td></tr></tbody></table>
     ${consumos.length?`<table><thead><tr><th>Consumos</th><th>Fecha</th><th>Monto</th></tr></thead><tbody>
     ${consumos.map(m=>`<tr><td>${m.descripcion||"—"}</td><td>${fechaDia(m.fecha)}</td><td class="neg">- ${fmtR(m.monto)}</td></tr>`).join("")}
     <tr class="tr"><td colspan="2"><b>Total consumos</b></td><td class="neg"><b>- ${fmtR(totalConsumos)}</b></td></tr></tbody></table>`:""}
@@ -265,10 +265,10 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
         {horasFilt.length>0&&<>
           <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase"}}>Horas trabajadas</div>
           <table style={{...css.table,marginBottom:12}}>
-            <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Horas</th><th style={css.th}>Valor/h</th><th style={css.th}>Subtotal</th></tr></thead>
+            <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Turno</th><th style={{...css.th,color:C.success}}>Entrada</th><th style={{...css.th,color:C.danger}}>Salida</th><th style={css.th}>Horas</th><th style={css.th}>Valor/h</th><th style={css.th}>Subtotal</th></tr></thead>
             <tbody>
-              {horasFilt.map(h=><tr key={h.id}><td style={css.td}>{fechaDia(h.fecha)}</td><td style={css.td}>{h.horas}hs</td><td style={css.td}>{fmtR(emp.valorHora)}</td><td style={{...css.td,fontWeight:700}}>{fmtR(h.horas*emp.valorHora)}</td></tr>)}
-              <tr style={{background:"#1a1a1a"}}><td style={{...css.td,fontWeight:700}} colSpan={2}>Total {totalHoras.toFixed(1)} horas</td><td style={css.td}></td><td style={{...css.td,fontWeight:800,color:C.accent,fontSize:14}}>{fmtR(bruto)}</td></tr>
+              {horasFilt.slice().sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map(h=><tr key={h.id}><td style={{...css.td,whiteSpace:"nowrap"}}>{fechaDia(h.fecha)}</td><td style={css.td}>{h.turno||"—"}</td><td style={{...css.td,color:C.success,fontWeight:700}}>{h.horaEntrada||"—"}</td><td style={{...css.td,color:C.danger,fontWeight:700}}>{h.horaSalida||"—"}</td><td style={css.td}>{h.horas}hs</td><td style={css.td}>{fmtR(emp.valorHora)}</td><td style={{...css.td,fontWeight:700}}>{fmtR(h.horas*emp.valorHora)}</td></tr>)}
+              <tr style={{background:"#1a1a1a"}}><td style={{...css.td,fontWeight:700}} colSpan={5}>Total {totalHoras.toFixed(1)} horas</td><td style={css.td}></td><td style={{...css.td,fontWeight:800,color:C.accent,fontSize:14}}>{fmtR(bruto)}</td></tr>
             </tbody>
           </table>
         </>}
