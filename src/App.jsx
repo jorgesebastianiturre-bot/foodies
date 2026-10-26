@@ -45,6 +45,23 @@ const gid = () => Math.random().toString(36).substr(2,9);
 const hoy = () => new Date().toLocaleDateString("en-CA");
 const turnoPorHora = () => new Date().getHours()<16?"Mañana":"Noche";
 const TURNO_KEY = "foodies_turno_activo";
+// WhatsApp: arma el número internacional de Argentina (549 + área + número, sin 0 ni 15)
+const telWhatsApp = (tel) => {
+  let d = String(tel||"").replace(/\D/g,"");
+  if(!d) return "";
+  if(d.startsWith("549")) return d;
+  if(d.startsWith("54")) d = d.slice(2);
+  if(d.startsWith("0")) d = d.slice(1);
+  if(d.length===12){ if(d.slice(3,5)==="15") d=d.slice(0,3)+d.slice(5); else if(d.slice(4,6)==="15") d=d.slice(0,4)+d.slice(6); else if(d.slice(2,4)==="15") d=d.slice(0,2)+d.slice(4); }
+  if(d.length===7) d = "266"+d;            // número local sin característica: San Luis (266)
+  if(d.length===9 && d.startsWith("15")) d = "266"+d.slice(2);
+  return d.length>=10 ? "549"+d : "";
+};
+const abrirWhatsApp = (tel, texto) => {
+  const n = telWhatsApp(tel);
+  if(!n){ alert("El cliente no tiene un teléfono válido cargado."); return; }
+  window.open(`https://wa.me/${n}?text=${encodeURIComponent(texto||"")}`, "_blank");
+};
 const normTxt = (s) => String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g," ").trim();
 const leerTurnoGuardado = () => { try { const t = localStorage.getItem(TURNO_KEY); return t ? JSON.parse(t) : null; } catch(e) { return null; } };
 const fmt = (n) => `$${Number(n||0).toLocaleString("es-AR")}`;
@@ -318,6 +335,7 @@ export default function FoodiesApp() {
   // Buscador cliente en factura
   const [nfCliBusq, setNfCliBusq] = useState(""); const [nfCliOpen, setNfCliOpen] = useState(false);
   const [nfCliNew, setNfCliNew] = useState(false); const [nfCliNewTel, setNfCliNewTel] = useState(""); const [nfCliNewApe, setNfCliNewApe] = useState("");
+  const [nfCliNewNom, setNfCliNewNom] = useState(""); const [nfCliNewDir, setNfCliNewDir] = useState("");
   const [nfReset, setNfReset] = useState(0); // key para resetear SelRapido al emitir
   const [nfCliIdx, setNfCliIdx] = useState(0);
   const [masOpen, setMasOpen] = useState(false);
@@ -684,23 +702,30 @@ export default function FoodiesApp() {
     return ops;
   };
   const elegirOpcionCliente = (o) => {
-    if(o.nuevo){ setNfCliNew(true); setNfCliOpen(false); irA("nf-cli-ape"); return; }
+    if(o.nuevo){
+      // Si escribió "nombre apellido", se separan solos
+      const partes = nfCliBusq.trim().split(/\s+/);
+      setNfCliNewNom(partes[0]||""); setNfCliNewApe(partes.slice(1).join(" ")); setNfCliNewTel(""); setNfCliNewDir("");
+      setNfCliNew(true); setNfCliOpen(false); irA("nf-cli-nom"); return;
+    }
     setNf(p=>({...p,clienteId:o.c.id}));
     setNfCliBusq(o.c.nombre+(o.c.apellido?" "+o.c.apellido:""));
     setNfCliOpen(false); setNfCliNew(false);
     irA("nf-comanda");
   };
   const guardarClienteNuevo = async () => {
-    const nombre = nfCliBusq.trim(); if(!nombre) return;
+    const nombre = (nfCliNewNom||nfCliBusq).trim(); if(!nombre){ irA("nf-cli-nom"); return; }
+    const apellido = nfCliNewApe.trim(), telefono = nfCliNewTel.trim(), direccion = nfCliNewDir.trim();
     const id = gid();
-    const { error } = await supabase.from("clientes").insert({id,nombre,apellido:nfCliNewApe||"",telefono:nfCliNewTel||"",direccion:""});
+    const { error } = await supabase.from("clientes").insert({id,nombre,apellido,telefono,direccion});
     if(error){ alert("No se pudo guardar el cliente: "+error.message); return; }
-    setClientes(prev=>[...prev,{id,nombre,apellido:nfCliNewApe,telefono:nfCliNewTel,direccion:""}]);
+    setClientes(prev=>[...prev,{id,nombre,apellido,telefono,direccion}]);
     setNf(p=>({...p,clienteId:id}));
-    setNfCliBusq(nombre+(nfCliNewApe?" "+nfCliNewApe:""));
-    setNfCliOpen(false); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel("");
+    setNfCliBusq(nombre+(apellido?" "+apellido:""));
+    setNfCliOpen(false); setNfCliNew(false); setNfCliNewNom(""); setNfCliNewApe(""); setNfCliNewTel(""); setNfCliNewDir("");
     irA("nf-comanda");
   };
+
 
   // ── Tipo de venta: si es Envío, se agrega solo el ítem de envío al principio ──
   const prodEnvio = productos.find(p=>p.id==="P062") || productos.find(p=>normTxt(p.nombre)==="envio");
@@ -813,8 +838,33 @@ export default function FoodiesApp() {
       if(data&&data.length) setModalImprimir(m=>m&&m.id===f.id?{...m,items:data.map(i=>({id:i.id,prodId:i.prod_id,nombre:i.nombre,precio:i.precio,qty:i.qty}))}:m);
     } catch(e) { console.error("items factura:",e); }
   };
+  // Texto del comprobante para mandar por WhatsApp
+  const textoComprobante = (f, nombreCli) => {
+    const L = datosLocal; const fechaTxt = f.fecha ? f.fecha.split("-").reverse().join("/") : "";
+    const lineas = (f.items||[]).map(i=>`• ${i.qty} x ${i.nombre} — ${fmt(i.precio*i.qty)}`).join("\n");
+    return `Hola${nombreCli?" "+nombreCli.split(" ")[0]:""}! 👋 Te enviamos el detalle de tu pedido en ${L.nombre} 🍔\n\n`
+      + `🧾 Comprobante ${f.numero} · ${fechaTxt}${f.comanda&&f.comanda!=="—"?" · Comanda #"+f.comanda:""}\n`
+      + (lineas?lineas+"\n":"")
+      + `\n💰 *Total: ${fmt(f.total)}*\n\n¡Gracias por elegir ${L.nombre}!${L.instagram?" Seguinos en "+L.instagram:""}`;
+  };
+  // Si el cliente está agendado y le faltaba teléfono/dirección, se completan con lo cargado al imprimir
+  const completarDatosCliente = async (f) => {
+    const cli = clientes.find(c=>c.id===f.clienteId); if(!cli) return;
+    const cambios = {};
+    if(!cli.telefono && impCli.telefono.trim()) cambios.telefono = impCli.telefono.trim();
+    if(!cli.direccion && impCli.direccion.trim()) cambios.direccion = impCli.direccion.trim();
+    if(Object.keys(cambios).length===0) return;
+    const { error } = await supabase.from("clientes").update(cambios).eq("id",cli.id);
+    if(!error) setClientes(prev=>prev.map(c=>c.id===cli.id?{...c,...cambios}:c));
+  };
+  const enviarWhatsAppImprimir = () => {
+    const f = modalImprimir; if(!f) return;
+    completarDatosCliente(f);
+    abrirWhatsApp(impCli.telefono, textoComprobante(f, impCli.nombre));
+  };
   const imprimirFactura = () => {
     const f = modalImprimir; if(!f) return;
+    completarDatosCliente(f);
     const esc = (s) => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     const L = datosLocal;
     const fechaTxt = f.fecha ? f.fecha.split("-").reverse().join("/") : "";
@@ -1820,6 +1870,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <button style={{...css.btn("neutral"),flex:1,padding:12}} onClick={()=>setModalImprimir(null)}>Cancelar</button>
               <button style={{...css.btn(),flex:2,padding:12}} onClick={imprimirFactura}>🖨️ Imprimir / PDF</button>
             </div>
+            <div style={{display:"flex",gap:8,marginTop:8}}>
+              <button style={{...css.btn("success"),flex:1,padding:12,background:"#16a34a",opacity:telWhatsApp(impCli.telefono)?1:0.4}} disabled={!telWhatsApp(impCli.telefono)} onClick={enviarWhatsAppImprimir}>💬 Enviar por WhatsApp</button>
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginTop:8}}>💬 WhatsApp abre el chat del cliente con el detalle del pedido. Para mandar la factura en PDF, guardala con "Imprimir / PDF" y adjuntala en el chat.</div>
             {!datosLocal.telefono&&esAdmin&&<div style={{fontSize:11,color:C.warn,marginTop:10}}>💡 Cargá el teléfono e Instagram del local en Configuración → Datos del local, para que salgan en la factura.</div>}
           </div>
         </div>}
@@ -1905,11 +1959,15 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                   })()}
                 </div>
                 {nfCliNew&&<div style={{background:"#111",border:`1px solid ${C.accent}`,borderRadius:8,padding:10,marginTop:6}}>
-                  <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:6}}>Cliente nuevo: {nfCliBusq.trim()}</div>
+                  <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:6}}>➕ Cliente nuevo</div>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                    <input id="nf-cli-ape" style={{...css.input,fontSize:14}} placeholder="Apellido (opcional)" value={nfCliNewApe} onChange={e=>setNfCliNewApe(e.target.value)} enterKeyHint="next"
+                    <input id="nf-cli-nom" style={{...css.input,fontSize:14}} placeholder="Nombre *" value={nfCliNewNom} onChange={e=>setNfCliNewNom(e.target.value)} enterKeyHint="next" autoComplete="off"
+                      onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("nf-cli-ape");}}}/>
+                    <input id="nf-cli-ape" style={{...css.input,fontSize:14}} placeholder="Apellido" value={nfCliNewApe} onChange={e=>setNfCliNewApe(e.target.value)} enterKeyHint="next" autoComplete="off"
                       onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("nf-cli-tel");}}}/>
-                    <input id="nf-cli-tel" style={{...css.input,fontSize:14}} placeholder="Teléfono (opcional)" value={nfCliNewTel} onChange={e=>setNfCliNewTel(e.target.value)} type="tel" enterKeyHint="done"
+                    <input id="nf-cli-tel" style={{...css.input,fontSize:14}} placeholder="Teléfono / WhatsApp (ej: 266 4123456)" value={nfCliNewTel} onChange={e=>setNfCliNewTel(e.target.value)} type="tel" inputMode="tel" enterKeyHint="next" autoComplete="off"
+                      onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();irA("nf-cli-dir");}}}/>
+                    <input id="nf-cli-dir" style={{...css.input,fontSize:14}} placeholder="Dirección" value={nfCliNewDir} onChange={e=>setNfCliNewDir(e.target.value)} enterKeyHint="done" autoComplete="off"
                       onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();guardarClienteNuevo();}}}/>
                     <div style={{display:"flex",gap:6}}>
                       <button style={{...css.btn("neutral"),flex:1}} onClick={()=>{setNfCliNew(false);irA("nf-cliente");}}>Cancelar</button>
@@ -2037,6 +2095,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                 <td style={{...css.td,fontWeight:700}}>{fmt(f.total)}</td>
                 <td style={css.td}><div style={{display:"flex",gap:5}}>
                   <button title="Imprimir factura" style={{...css.btn(),padding:"4px 8px",fontSize:10}} onClick={()=>abrirImprimir(f)}>🖨️</button>
+                  {(()=>{ const cli=clientes.find(c=>c.id===f.clienteId); return cli&&telWhatsApp(cli.telefono)
+                    ? <button title={"WhatsApp a "+cli.nombre} style={{...css.btn("success"),background:"#16a34a",padding:"4px 8px",fontSize:10}} onClick={()=>abrirWhatsApp(cli.telefono, textoComprobante(f, ((cli.nombre||"")+" "+(cli.apellido||"")).trim()))}>💬</button>
+                    : null; })()}
                   {esAdmin&&<button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>abrirEdicion(f)}>✏️</button>}
                   {esAdmin&&<button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarFactura(f.id)}>🗑</button>}
                   <span style={{...css.badge(f.estado),cursor:esAdmin?"pointer":"default",padding:"4px 9px"}} onClick={()=>esAdmin&&setFacturas(prev=>prev.map(x=>x.id===f.id?{...x,estado:x.estado==="pagada"?"pendiente":"pagada"}:x))}>{f.estado==="pagada"?"✅":"⏳"}</span>
