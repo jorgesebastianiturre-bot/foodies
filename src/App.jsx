@@ -32,6 +32,13 @@ const USUARIOS = {
 
 const DIAS_ALERTA = 30;
 const DIAS = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+const DIAS_LARGO = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+// "Lun 20/10/2026" — fecha con el día de la semana
+const fechaDia = (fecha) => {
+  if(!fecha) return "—";
+  const d = new Date(fecha+"T12:00:00");
+  return `${DIAS[d.getDay()]} ${fecha.split("-").reverse().join("/")}`;
+};
 const fmtFecha = (fecha) => {
   if(!fecha) return "—";
   const d = new Date(fecha+"T12:00:00");
@@ -175,14 +182,14 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
     let y = 60;
     if(horasFilt.length){
       autoTable(doc,{...est, startY:y, head:[["Fecha","Turno","Entrada","Salida","Horas","Subtotal"]],
-        body: horasFilt.slice().sort((a,b)=>a.fecha.localeCompare(b.fecha)).map(h=>[fFecha(h.fecha),h.turno||"",h.horaEntrada||"",h.horaSalida||"",h.horas+" hs",fmtR(h.horas*(parseFloat(emp.valorHora)||0))]),
+        body: horasFilt.slice().sort((a,b)=>a.fecha.localeCompare(b.fecha)).map(h=>[fechaDia(h.fecha),h.turno||"",h.horaEntrada||"",h.horaSalida||"",h.horas+" hs",fmtR(h.horas*(parseFloat(emp.valorHora)||0))]),
         foot:[["Total","","","",totalHoras.toFixed(1)+" hs",fmtR(bruto)]]});
       y = doc.lastAutoTable.finalY + 6;
     }
     [["Consumos",consumos,totalConsumos],["Adelantos",adelantos,totalAdelantos]].forEach(([tit,lista,tot])=>{
       if(!lista.length) return;
       autoTable(doc,{...est, startY:y, head:[[tit,"Fecha","Monto"]],
-        body: lista.map(m=>[m.descripcion||"—",fFecha(m.fecha),"- "+fmtR(m.monto)]),
+        body: lista.map(m=>[m.descripcion||"—",fechaDia(m.fecha),"- "+fmtR(m.monto)]),
         foot:[["Total "+tit.toLowerCase(),"","- "+fmtR(tot)]]});
       y = doc.lastAutoTable.finalY + 6;
     });
@@ -230,13 +237,13 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
     <h1>🍔 Foodies — Liquidación de Haberes</h1>
     <h2>${emp.nombre} · ${emp.rol} · Período: ${desde||"inicio"} al ${hasta||hoy()}</h2>
     <table><thead><tr><th>Fecha</th><th>Horas</th><th>Valor/h</th><th>Subtotal</th></tr></thead>
-    <tbody>${horasFilt.map(h=>`<tr><td>${h.fecha}</td><td>${h.horas}hs</td><td>${fmtR(emp.valorHora)}</td><td>${fmtR(h.horas*emp.valorHora)}</td></tr>`).join("")}
+    <tbody>${horasFilt.map(h=>`<tr><td>${fechaDia(h.fecha)}</td><td>${h.horas}hs</td><td>${fmtR(emp.valorHora)}</td><td>${fmtR(h.horas*emp.valorHora)}</td></tr>`).join("")}
     <tr class="tr"><td colspan="2"><b>Total ${totalHoras.toFixed(1)} horas</b></td><td></td><td><b>${fmtR(bruto)}</b></td></tr></tbody></table>
     ${consumos.length?`<table><thead><tr><th>Consumos</th><th>Fecha</th><th>Monto</th></tr></thead><tbody>
-    ${consumos.map(m=>`<tr><td>${m.descripcion||"—"}</td><td>${m.fecha}</td><td class="neg">- ${fmtR(m.monto)}</td></tr>`).join("")}
+    ${consumos.map(m=>`<tr><td>${m.descripcion||"—"}</td><td>${fechaDia(m.fecha)}</td><td class="neg">- ${fmtR(m.monto)}</td></tr>`).join("")}
     <tr class="tr"><td colspan="2"><b>Total consumos</b></td><td class="neg"><b>- ${fmtR(totalConsumos)}</b></td></tr></tbody></table>`:""}
     ${adelantos.length?`<table><thead><tr><th>Adelantos</th><th>Fecha</th><th>Monto</th></tr></thead><tbody>
-    ${adelantos.map(m=>`<tr><td>${m.descripcion||"—"}</td><td>${m.fecha}</td><td class="neg">- ${fmtR(m.monto)}</td></tr>`).join("")}
+    ${adelantos.map(m=>`<tr><td>${m.descripcion||"—"}</td><td>${fechaDia(m.fecha)}</td><td class="neg">- ${fmtR(m.monto)}</td></tr>`).join("")}
     <tr class="tr"><td colspan="2"><b>Total adelantos</b></td><td class="neg"><b>- ${fmtR(totalAdelantos)}</b></td></tr></tbody></table>`:""}
     <div style="border-top:2px solid #f97316;padding-top:14px;text-align:right;margin-top:8px">
     <span style="font-size:13px;color:#555">TOTAL NETO A PERCIBIR: </span><span class="neto">${fmtR(neto)}</span></div>
@@ -260,7 +267,7 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
           <table style={{...css.table,marginBottom:12}}>
             <thead><tr><th style={css.th}>Fecha</th><th style={css.th}>Horas</th><th style={css.th}>Valor/h</th><th style={css.th}>Subtotal</th></tr></thead>
             <tbody>
-              {horasFilt.map(h=><tr key={h.id}><td style={css.td}>{h.fecha}</td><td style={css.td}>{h.horas}hs</td><td style={css.td}>{fmtR(emp.valorHora)}</td><td style={{...css.td,fontWeight:700}}>{fmtR(h.horas*emp.valorHora)}</td></tr>)}
+              {horasFilt.map(h=><tr key={h.id}><td style={css.td}>{fechaDia(h.fecha)}</td><td style={css.td}>{h.horas}hs</td><td style={css.td}>{fmtR(emp.valorHora)}</td><td style={{...css.td,fontWeight:700}}>{fmtR(h.horas*emp.valorHora)}</td></tr>)}
               <tr style={{background:"#1a1a1a"}}><td style={{...css.td,fontWeight:700}} colSpan={2}>Total {totalHoras.toFixed(1)} horas</td><td style={css.td}></td><td style={{...css.td,fontWeight:800,color:C.accent,fontSize:14}}>{fmtR(bruto)}</td></tr>
             </tbody>
           </table>
@@ -269,14 +276,14 @@ function Recibo({ emp, horas, movimientos, desde, hasta, onClose }) {
           <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase"}}>Consumos</div>
           <table style={{...css.table,marginBottom:12}}>
             <thead><tr><th style={css.th}>Descripción</th><th style={css.th}>Fecha</th><th style={css.th}>Monto</th></tr></thead>
-            <tbody>{consumos.map(m=><tr key={m.id}><td style={css.td}>{m.descripcion||"—"}</td><td style={css.td}>{m.fecha}</td><td style={{...css.td,color:C.danger,fontWeight:700}}>- {fmtR(m.monto)}</td></tr>)}</tbody>
+            <tbody>{consumos.map(m=><tr key={m.id}><td style={css.td}>{m.descripcion||"—"}</td><td style={css.td}>{fechaDia(m.fecha)}</td><td style={{...css.td,color:C.danger,fontWeight:700}}>- {fmtR(m.monto)}</td></tr>)}</tbody>
           </table>
         </>}
         {adelantos.length>0&&<>
           <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase"}}>Adelantos</div>
           <table style={{...css.table,marginBottom:12}}>
             <thead><tr><th style={css.th}>Descripción</th><th style={css.th}>Fecha</th><th style={css.th}>Monto</th></tr></thead>
-            <tbody>{adelantos.map(m=><tr key={m.id}><td style={css.td}>{m.descripcion||"—"}</td><td style={css.td}>{m.fecha}</td><td style={{...css.td,color:C.danger,fontWeight:700}}>- {fmtR(m.monto)}</td></tr>)}</tbody>
+            <tbody>{adelantos.map(m=><tr key={m.id}><td style={css.td}>{m.descripcion||"—"}</td><td style={css.td}>{fechaDia(m.fecha)}</td><td style={{...css.td,color:C.danger,fontWeight:700}}>- {fmtR(m.monto)}</td></tr>)}</tbody>
           </table>
         </>}
         <div style={{background:`linear-gradient(135deg,${C.accent}22,transparent)`,border:`1px solid ${C.accent}44`,borderRadius:10,padding:"16px 18px",marginBottom:16}}>
@@ -2796,7 +2803,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             <div style={css.card}><div style={css.cardTitle}>⏱ Registrar Turno</div>
               <div style={css.row}>
                 <div style={css.col}><div style={css.lbl}>Empleado *</div><select style={css.sel} value={horaEmpId} onChange={e=>setHoraEmpId(e.target.value)}><option value="">— Seleccionar —</option>{empleados.map(e=><option key={e.id} value={e.id}>{e.nombre} ({e.rol})</option>)}</select></div>
-                <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} type="date" value={horaFecha} onChange={e=>setHoraFecha(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Fecha {horaFecha&&<b style={{color:C.accent}}>· {DIAS_LARGO[new Date(horaFecha+"T12:00:00").getDay()]}</b>}</div><input style={css.input} type="date" value={horaFecha} onChange={e=>setHoraFecha(e.target.value)}/></div>
                 <div style={css.col}><div style={css.lbl}>Turno</div><select style={css.sel} value={horaTurno} onChange={e=>setHoraTurno(e.target.value)}><option>Mañana</option><option>Tarde</option><option>Noche</option></select></div>
                 <div style={{...css.col,maxWidth:130}}><div style={css.lbl}>Hora entrada *</div><input style={{...css.input,maxWidth:130}} type="time" value={horaEntrada} onChange={e=>setHoraEntrada(e.target.value)}/></div>
                 <div style={{...css.col,maxWidth:130}}><div style={css.lbl}>Hora salida *</div><input style={{...css.input,maxWidth:130}} type="time" value={horaSalida} onChange={e=>setHoraSalida(e.target.value)}/></div>
@@ -2826,7 +2833,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                     const emp=empleados.find(e=>e.id===h.empleadoId);
                     return <tr key={h.id}>
                       <td style={{...css.td,fontWeight:600}}>{emp?.nombre||"—"}</td>
-                      <td style={css.td}>{h.fecha}</td>
+                      <td style={{...css.td,whiteSpace:"nowrap"}}>{fechaDia(h.fecha)}</td>
                       <td style={css.td}><span style={css.tag(C.info)}>{h.turno||"—"}</span></td>
                       <td style={{...css.td,color:C.success,fontWeight:700}}>{h.horaEntrada||"—"}</td>
                       <td style={{...css.td,color:C.danger,fontWeight:700}}>{h.horaSalida||"—"}</td>
@@ -2846,7 +2853,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                 <div style={css.col}><div style={css.lbl}>Empleado</div><select style={css.sel} value={movEmpId} onChange={e=>setMovEmpId(e.target.value)}><option value="">— Seleccionar —</option>{empleados.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
                 <div style={css.col}><div style={css.lbl}>Tipo</div><select style={css.sel} value={movTipo} onChange={e=>setMovTipo(e.target.value)}><option value="adelanto">💰 Adelanto</option><option value="consumo">🛒 Consumo</option></select></div>
                 <div style={{...css.col,maxWidth:160}}><div style={css.lbl}>Monto ($)</div><input style={css.input} type="number" placeholder="0" value={movMonto} onChange={e=>setMovMonto(e.target.value)}/></div>
-                <div style={css.col}><div style={css.lbl}>Fecha</div><input style={css.input} type="date" value={movFecha} onChange={e=>setMovFecha(e.target.value)}/></div>
+                <div style={css.col}><div style={css.lbl}>Fecha {movFecha&&<b style={{color:C.accent}}>· {DIAS_LARGO[new Date(movFecha+"T12:00:00").getDay()]}</b>}</div><input style={css.input} type="date" value={movFecha} onChange={e=>setMovFecha(e.target.value)}/></div>
                 <div style={css.col}><div style={css.lbl}>Descripción</div><input style={css.input} placeholder="Ej: efectivo, galletitas..." value={movDesc} onChange={e=>setMovDesc(e.target.value)}/></div>
                 <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn()} onClick={guardarMovimiento}>✅ Registrar</button></div>
               </div>
@@ -2871,7 +2878,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                       <td style={{...css.td,fontWeight:600}}>{emp?.nombre||"—"}</td>
                       <td style={css.td}><span style={css.tag(m.tipo==="adelanto"?C.warn:C.info)}>{m.tipo==="adelanto"?"💰 Adelanto":"🛒 Consumo"}</span></td>
                       <td style={{...css.td,fontWeight:700,color:C.danger}}>- {fmt(m.monto)}</td>
-                      <td style={css.td}>{m.fecha}</td>
+                      <td style={{...css.td,whiteSpace:"nowrap"}}>{fechaDia(m.fecha)}</td>
                       <td style={{...css.td,color:C.muted}}>{m.descripcion||"—"}</td>
                       {esAdmin&&<td style={css.td}><div style={{display:"flex",gap:5}}><button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>setEditPers({kind:"mov",id:m.id,empleadoId:m.empleadoId,tipo:m.tipo,monto:String(m.monto),fecha:m.fecha,descripcion:m.descripcion||""})}>✏️</button><button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarMovimiento(m.id)}>🗑</button></div></td>}
                     </tr>;
