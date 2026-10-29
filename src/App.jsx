@@ -851,13 +851,19 @@ export default function FoodiesApp() {
     if(conNum.length===0) return null;
     const ultimo = conNum.reduce((m,f)=>{ const o=ordenTurno(f.fecha,f.turno); return o>m?o:m; }, "");
     const delTurno = conNum.filter(f=>ordenTurno(f.fecha,f.turno)===ultimo);
+    // La ÚLTIMA comanda que se cargó (por hora de carga), no la más alta:
+    // así funciona cuando cambia el talonario o la numeración vuelve a empezar (ej: 7979000 → 7978901).
+    const ts = (f)=>String(f.created_at||"").replace("T"," ");
+    // Se descartan los números mal tipeados (muy lejos del resto del turno, ej: 79789999 o 797899)
     const nums = delTurno.map(f=>parseInt(f.comanda)).sort((a,b)=>a-b);
     const mediana = nums[Math.floor(nums.length/2)];
-    const validos = nums.filter(n=>Math.abs(n-mediana)<=300);
-    const num = Math.max(...validos);
-    const usos = conNum.filter(f=>parseInt(f.comanda)===num).length;
+    const candidatas = delTurno.filter(f=>Math.abs(parseInt(f.comanda)-mediana)<=300);
+    const ultimaF = (candidatas.length?candidatas:delTurno).slice().sort((x,y)=>ts(y).localeCompare(ts(x)) || parseInt(y.comanda)-parseInt(x.comanda))[0];
+    const num = parseInt(ultimaF.comanda);
+    // Cuántas veces se usó ese número, solo desde ese turno (el mismo número puede repetirse en otro talonario)
+    const usos = conNum.filter(f=>ordenTurno(f.fecha,f.turno)>=ultimo && parseInt(f.comanda)===num).length;
     const esCopia = usos<2;
-    return { num, usos, siguiente: esCopia ? num : num+1, esCopia, fecha: delTurno[0].fecha, turno: delTurno[0].turno };
+    return { num, usos, siguiente: esCopia ? num : num+1, esCopia, fecha: ultimaF.fecha, turno: ultimaF.turno };
   };
   // Verificar código del administrador contra Supabase (hash SHA-256)
   const verificarPin = async (pin) => {
@@ -1049,7 +1055,7 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
       medioPago1:nf.medioPago1, importe1:parseFloat(nf.importe1)||0,
       medioPago2:nf.medioPago2||"", importe2:parseFloat(nf.importe2)||0,
       transferConfirmada:hayTransfer?false:null,
-      items:[...nf.items], total:totalItems, notas:nf.notas, estado:"pagada" };
+      items:[...nf.items], total:totalItems, notas:nf.notas, estado:"pagada", created_at:new Date().toISOString() };
     await supabase.from("facturas").insert({ id, numero:f.numero, comanda:f.comanda, fecha:f.fecha, turno:f.turno,
       tipo_venta:f.tipoVenta, vendedor:f.vendedor, cadete:f.cadete, cliente:f.cliente, cliente_id:f.clienteId||"",
       medio_pago1:f.medioPago1, importe1:f.importe1, medio_pago2:f.medioPago2, importe2:f.importe2,
