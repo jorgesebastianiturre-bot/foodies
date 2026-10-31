@@ -366,6 +366,29 @@ function SelRapido({ opciones, valor, onChange, placeholder, id, onEnter, vacio 
   );
 }
 
+// Convierten filas de la base al formato de la app (carga inicial y sincronización entre aparatos)
+const mapFacturaDb = (f, itemsPorFactura) => ({
+  ...f, id:f.id, numero:f.numero, comanda:f.comanda, fecha:f.fecha,
+  turno:f.turno, tipoVenta:f.tipo_venta, vendedor:f.vendedor, cadete:f.cadete,
+  cliente:f.cliente, clienteId:f.cliente_id,
+  medioPago1:f.medio_pago1, importe1:f.importe1,
+  medioPago2:f.medio_pago2, importe2:f.importe2,
+  transferConfirmada:f.transfer_confirmada, total:f.total, notas:f.notas, estado:f.estado,
+  items:(itemsPorFactura[f.id]||[]).map(i=>({id:i.id,prodId:i.prod_id,nombre:i.nombre,precio:i.precio,qty:i.qty}))
+});
+const mapCierreDb = (c) => ({
+  id:c.id, fecha:c.fecha, turno:c.turno, facturas:c.facturas_count,
+  efectivo:parseFloat(c.efectivo)||0, transferConfirmada:parseFloat(c.transfer_confirmada)||0,
+  transferPendiente:parseFloat(c.transfer_pendiente)||0, cuentaCorriente:parseFloat(c.cuenta_corriente)||0,
+  efectivoContado:parseFloat(c.efectivo_contado)||0, gastosContado:parseFloat(c.gastos)||0, retiros:parseFloat(c.retiros)||0,
+  efectivoEsperado:parseFloat(c.efectivo_esperado)||0, diferencia:parseFloat(c.diferencia)||0, obs:c.obs||"",
+  comandaInicial:c.comanda_inicial||null
+});
+const mapGastoDb = (g) => ({ id:g.id, fecha:g.fecha, hora:g.hora||"", turno:g.turno, tipo:g.tipo, concepto:g.concepto, monto:parseFloat(g.monto)||0, cierreId:g.cierre_id });
+const mapPagoCCDb = (p) => ({id:p.id,clienteId:p.cliente_id,clienteNombre:p.cliente_nombre,monto:p.monto,fecha:p.fecha,obs:p.obs});
+const SYNC_DIAS = 3;          // la sincronización revisa los últimos días
+const SYNC_CADA_MS = 15000;   // cada 15 segundos (y al volver a la app)
+
 export default function FoodiesApp() {
   // ── Login ──
   const [usuario, setUsuario] = useState(null);
@@ -515,6 +538,61 @@ export default function FoodiesApp() {
   const esVentas = usuario?.rol === "empleado" || esAdmin;
 
   useEffect(() => { if(usuario) cargarDatos(); }, [usuario]);
+  // leerTurnoCompartido se define más abajo (después de los "return" de carga): se usa por referencia
+  const leerTurnoRef = useRef(null);
+  useEffect(() => { if(usuario && !cargando) leerTurnoRef.current?.(); }, [usuario, cargando]);
+
+  // ── SINCRONIZACIÓN entre aparatos (celular y compu cargando a la vez) ──
+  const [syncEstado, setSyncEstado] = useState({ok:true, hora:""});
+  const sincronizando = useRef(false);
+  const reemplazarRecientes = (prev, nuevos, desde, campoFecha="fecha") => {
+    const viejos = prev.filter(x=>(x[campoFecha]||"")<desde);
+    // lo recién cargado en este aparato que todavía no llegó a la consulta, se mantiene
+    const idsNuevos = new Set(nuevos.map(x=>x.id));
+    const hace1min = Date.now()-60000;
+    const enCamino = prev.filter(x=>(x[campoFecha]||"")>=desde && !idsNuevos.has(x.id) && x._local && x._local>hace1min);
+    const res = [...enCamino, ...nuevos, ...viejos];
+    // si no cambió nada, se devuelve la misma lista (no se redibuja la pantalla)
+    const firma = (arr)=>JSON.stringify(arr.filter(x=>(x[campoFecha]||"")>=desde).map(x=>[x.id,x.total,x.transferConfirmada,x.estado,x.comanda,x.monto,x.cierreId,x.diferencia,(x.items||[]).length]).sort());
+    return firma(res)===firma(prev) ? prev : res;
+  };
+  const sincronizar = async () => {
+    if(sincronizando.current || cargando) return;
+    sincronizando.current = true;
+    try {
+      const d = new Date(); d.setDate(d.getDate()-SYNC_DIAS); const desde = d.toLocaleDateString("en-CA");
+      await leerTurnoRef.current?.();
+      const [rf, rc, rg, rp] = await Promise.all([
+        supabase.from("facturas").select("*").gte("fecha",desde).order("created_at",{ascending:false}),
+        supabase.from("cierres_caja").select("*").gte("fecha",desde).order("created_at",{ascending:false}),
+        supabase.from("gastos_retiros").select("*").gte("fecha",desde).order("created_at",{ascending:false}),
+        supabase.from("pagos_cc").select("*").gte("fecha",desde).order("created_at",{ascending:false}),
+      ]);
+      if(rf.error) throw rf.error;
+      const fs = rf.data||[];
+      const itemsPorFactura = {};
+      for(let i=0;i<fs.length;i+=150){
+        const { data:its, error } = await supabase.from("factura_items").select("*").in("factura_id", fs.slice(i,i+150).map(f=>f.id));
+        if(error) throw error;
+        (its||[]).forEach(it=>{ (itemsPorFactura[it.factura_id] ||= []).push(it); });
+      }
+      setFacturas(prev=>reemplazarRecientes(prev, fs.map(f=>mapFacturaDb(f,itemsPorFactura)), desde));
+      if(rc.data) setCierres(prev=>reemplazarRecientes(prev, rc.data.map(mapCierreDb), desde));
+      if(rg.data) setGastosRetiros(prev=>reemplazarRecientes(prev, rg.data.map(mapGastoDb), desde));
+      if(rp.data) setPagosCC(prev=>reemplazarRecientes(prev, rp.data.map(mapPagoCCDb), desde));
+      setSyncEstado({ok:true, hora:new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})});
+    } catch(e) { console.error("sincronizar:",e); setSyncEstado(s=>({...s,ok:false})); }
+    finally { sincronizando.current = false; }
+  };
+  const sincronizarRef = useRef(sincronizar); sincronizarRef.current = sincronizar;
+  useEffect(()=>{
+    if(!usuario) return;
+    const tick = ()=>sincronizarRef.current();
+    const id = setInterval(tick, SYNC_CADA_MS);
+    const alVolver = ()=>{ if(document.visibilityState==="visible") tick(); };
+    document.addEventListener("visibilitychange", alVolver); window.addEventListener("focus", tick);
+    return ()=>{ clearInterval(id); document.removeEventListener("visibilitychange", alVolver); window.removeEventListener("focus", tick); };
+  },[usuario]);
 
   const cargarDatos = async () => {
     setCargando(true);
@@ -524,35 +602,17 @@ export default function FoodiesApp() {
       const [{ data:facts }, { data:items }] = await Promise.all([ traerTodo("facturas","created_at",false), traerTodo("factura_items") ]);
       const itemsPorFactura = {};
       (items||[]).forEach(i=>{ (itemsPorFactura[i.factura_id] ||= []).push(i); });
-      if(facts && items) setFacturas(facts.map(f=>({
-        ...f, id:f.id, numero:f.numero, comanda:f.comanda, fecha:f.fecha,
-        turno:f.turno, tipoVenta:f.tipo_venta, vendedor:f.vendedor, cadete:f.cadete,
-        cliente:f.cliente, clienteId:f.cliente_id,
-        medioPago1:f.medio_pago1, importe1:f.importe1,
-        medioPago2:f.medio_pago2, importe2:f.importe2,
-        transferConfirmada:f.transfer_confirmada, total:f.total, notas:f.notas, estado:f.estado,
-        items:(itemsPorFactura[f.id]||[]).map(i=>({id:i.id,prodId:i.prod_id,nombre:i.nombre,precio:i.precio,qty:i.qty}))
-      })));
+      if(facts && items) setFacturas(facts.map(f=>mapFacturaDb(f, itemsPorFactura)));
     } catch(e) { console.error("facturas:",e); }
 
     try {
       const { data:cierresDb } = await traerTodo("cierres_caja","created_at",false);
-      if(cierresDb) setCierres(cierresDb.map(c=>({
-        id:c.id, fecha:c.fecha, turno:c.turno, facturas:c.facturas_count,
-        efectivo:parseFloat(c.efectivo)||0, transferConfirmada:parseFloat(c.transfer_confirmada)||0,
-        transferPendiente:parseFloat(c.transfer_pendiente)||0, cuentaCorriente:parseFloat(c.cuenta_corriente)||0,
-        efectivoContado:parseFloat(c.efectivo_contado)||0, gastosContado:parseFloat(c.gastos)||0, retiros:parseFloat(c.retiros)||0,
-        efectivoEsperado:parseFloat(c.efectivo_esperado)||0, diferencia:parseFloat(c.diferencia)||0, obs:c.obs||"",
-        comandaInicial:c.comanda_inicial||null
-      })));
+      if(cierresDb) setCierres(cierresDb.map(mapCierreDb));
     } catch(e) { console.error("cierres:",e); }
 
     try {
       const { data:grDb } = await traerTodo("gastos_retiros","created_at",false);
-      if(grDb) setGastosRetiros(grDb.map(g=>({
-        id:g.id, fecha:g.fecha, hora:g.hora||"", turno:g.turno,
-        tipo:g.tipo, concepto:g.concepto, monto:parseFloat(g.monto)||0, cierreId:g.cierre_id
-      })));
+      if(grDb) setGastosRetiros(grDb.map(mapGastoDb));
     } catch(e) { console.error("gastos_retiros:",e); }
 
     // Datos del local para la factura impresa (fila "datos_local" en configuracion)
@@ -570,7 +630,7 @@ export default function FoodiesApp() {
 
     try {
       const { data:pagos } = await traerTodo("pagos_cc","created_at",false);
-      if(pagos) setPagosCC(pagos.map(p=>({id:p.id,clienteId:p.cliente_id,clienteNombre:p.cliente_nombre,monto:p.monto,fecha:p.fecha,obs:p.obs})));
+      if(pagos) setPagosCC(pagos.map(mapPagoCCDb));
     } catch(e) { console.error("pagos_cc:",e); }
 
     try {
@@ -834,11 +894,32 @@ export default function FoodiesApp() {
   };
 
   // ── TURNO: apertura, correlatividad y cierre ──
-  const guardarTurno = (ta) => {
+  // El turno abierto se guarda en la base: así lo comparten el celular y la compu
+  const turnoLocal = (ta) => {
     setTurnoActivo(ta);
     try { if(ta) localStorage.setItem(TURNO_KEY, JSON.stringify(ta)); else localStorage.removeItem(TURNO_KEY); }
     catch(e) { console.error("localStorage:", e); }
   };
+  const guardarTurno = (ta) => {
+    turnoLocal(ta);
+    supabase.from("configuracion").upsert({id:"turno_activo",tipo:"turno_activo",valor:ta?JSON.stringify(ta):"",activo:!!ta},{onConflict:"id"})
+      .then(({error})=>{ if(error) console.error("turno compartido:",error); });
+  };
+  // Lee el turno compartido. Si nunca se guardó en la base y este aparato tiene uno abierto, lo sube.
+  const leerTurnoCompartido = async () => {
+    try {
+      const { data, error } = await supabase.from("configuracion").select("valor").eq("id","turno_activo").maybeSingle();
+      if(error) return;
+      if(!data){ const loc = leerTurnoGuardado(); if(loc) guardarTurno(loc); return; }
+      const remoto = data.valor ? JSON.parse(data.valor) : null;
+      setTurnoActivo(prev => {
+        const igual = JSON.stringify(prev||null)===JSON.stringify(remoto);
+        if(!igual){ try { if(remoto) localStorage.setItem(TURNO_KEY, JSON.stringify(remoto)); else localStorage.removeItem(TURNO_KEY); } catch(e) {} }
+        return igual ? prev : remoto;
+      });
+    } catch(e) { console.error("leer turno:",e); }
+  };
+  leerTurnoRef.current = leerTurnoCompartido;
   const ordenTurno = (fecha, turno) => (fecha||"") + (turno==="Noche"?"2":"1");
   // Última comanda del turno anterior (o del mismo turno si se está reabriendo).
   // Descarta números mal tipeados que se alejan mucho del resto del turno.
@@ -1048,7 +1129,11 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
     }
     const hayTransfer = nf.medioPago1==="Transferencia"||nf.medioPago2==="Transferencia";
     const id = gid();
-    const f = { id, numero:`FOO-${String(facturas.length+1).padStart(5,"0")}`,
+    // El número lo da la base: nunca se repite aunque carguen dos aparatos a la vez
+    let numero = null;
+    try { const { data } = await supabase.rpc("siguiente_numero_factura"); if(typeof data==="string") numero = data; } catch(e) {}
+    if(!numero) numero = `FOO-${String(facturas.length+1).padStart(5,"0")}`; // respaldo si falla la conexión
+    const f = { id, numero,
       comanda:nf.comanda||"—", fecha:nf.fecha, turno:nf.turno, tipoVenta:nf.tipoVenta,
       vendedor:nf.vendedor, cadete:nf.cadete||"—",
       cliente:clientes.find(c=>c.id===nf.clienteId)?.nombre||"", clienteId:nf.clienteId,
@@ -1061,7 +1146,7 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
       medio_pago1:f.medioPago1, importe1:f.importe1, medio_pago2:f.medioPago2, importe2:f.importe2,
       transfer_confirmada:f.transferConfirmada, total:f.total, notas:f.notas, estado:f.estado });
     await supabase.from("factura_items").insert(nf.items.map(i=>({id:i.id,factura_id:id,prod_id:i.prodId,nombre:i.nombre,precio:i.precio,qty:i.qty})));
-    setFacturas(prev=>[f,...prev]); setNf(emptyNf()); setNfCliBusq(""); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel(""); setNfReset(r=>r+1);
+    setFacturas(prev=>[{...f,_local:Date.now()},...prev]); setNf(emptyNf()); setNfCliBusq(""); setNfCliNew(false); setNfCliNewApe(""); setNfCliNewTel(""); setNfReset(r=>r+1);
     // Se queda en la carga de facturas, lista para la siguiente (antes saltaba al historial)
     setSelBusq(""); setSelProd(""); setSelQty(""); setSelPrecio("");
     setNfOk(`✅ Factura ${f.numero} guardada${f.comanda&&f.comanda!=="—"?" · comanda #"+f.comanda:""} · ${fmt(f.total)}`);
@@ -1890,6 +1975,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <div style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",fontSize:11,color:esAdmin?C.accent:esCompras?C.info:C.success,fontWeight:700}}>{esAdmin?"👑 Admin":esCompras?"📦 Compras":"👤 "+usuario.nombre}</div>
             <button style={{background:"#2a2a2a",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",fontSize:11,color:C.muted,cursor:"pointer"}} onClick={()=>setUsuario(null)}>Salir</button>
+            <span title={syncEstado.ok?("Sincronizado con los otros aparatos · "+syncEstado.hora):"Sin conexión: se reintenta solo"} style={{fontSize:10,color:syncEstado.ok?C.success:C.danger,whiteSpace:"nowrap"}}>{syncEstado.ok?"● En línea":"● Sin conexión"}</span>
           </div>
         </div>
       </header>
