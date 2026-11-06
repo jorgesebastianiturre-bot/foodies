@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { LOGO_FOODIES } from "./logoFoodies.js";
+import { Fichar, RegistrarRostro, ListaFichajes } from "./Fichaje.jsx";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -392,6 +393,8 @@ const SYNC_CADA_MS = 15000;   // cada 15 segundos (y al volver a la app)
 export default function FoodiesApp() {
   // ── Login ──
   const [usuario, setUsuario] = useState(null);
+  const [ficharOpen, setFicharOpen] = useState(false); // fichaje facial de entrada/salida
+  const [regRostroEmp, setRegRostroEmp] = useState(null); // empleado al que se le registra la cara
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -794,7 +797,11 @@ export default function FoodiesApp() {
         </div>
         {loginError&&<div style={{color:C.danger,fontSize:12,marginBottom:12}}>{loginError}</div>}
         <button style={{width:"100%",padding:"11px",borderRadius:8,border:"none",background:C.accent,color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer"}} onClick={handleLogin}>Ingresar</button>
+        <div style={{borderTop:`1px solid ${C.border}`,margin:"22px 0 16px"}}/>
+        <button style={{width:"100%",padding:"14px",borderRadius:10,border:`2px solid ${C.success}`,background:"#14532d",color:"#fff",fontWeight:800,fontSize:16,cursor:"pointer"}} onClick={()=>setFicharOpen(true)}>🕐 Fichar entrada / salida</button>
+        <div style={{fontSize:11,color:C.muted,marginTop:6}}>Para el personal: se ficha con la cara, sin usuario.</div>
       </div>
+      {ficharOpen&&<Fichar supabase={supabase} empleados={[]} onCerrar={()=>setFicharOpen(false)}/>}
     </div>
   );
 
@@ -1974,6 +1981,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           {comprasVencidas.length>0&&esCompras&&<div style={{background:"#7f1d1d",border:`1px solid ${C.danger}`,borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:C.danger}} onClick={()=>setTab("compras")}>📦 {comprasVencidas.length} vencidas</div>}
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <div style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",fontSize:11,color:esAdmin?C.accent:esCompras?C.info:C.success,fontWeight:700}}>{esAdmin?"👑 Admin":esCompras?"📦 Compras":"👤 "+usuario.nombre}</div>
+            <button style={{background:"#14532d",border:`1px solid ${C.success}`,borderRadius:8,padding:"5px 10px",fontSize:11,color:"#fff",fontWeight:700,cursor:"pointer"}} onClick={()=>setFicharOpen(true)}>🕐 Fichar</button>
             <button style={{background:"#2a2a2a",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",fontSize:11,color:C.muted,cursor:"pointer"}} onClick={()=>setUsuario(null)}>Salir</button>
             <span title={syncEstado.ok?("Sincronizado con los otros aparatos · "+syncEstado.hora):"Sin conexión: se reintenta solo"} style={{fontSize:10,color:syncEstado.ok?C.success:C.danger,whiteSpace:"nowrap"}}>{syncEstado.ok?"● En línea":"● Sin conexión"}</span>
           </div>
@@ -1985,6 +1993,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           {t.l}{t.badge>0&&<span style={{position:"absolute",top:-4,right:-4,background:C.danger,color:"#fff",borderRadius:999,fontSize:9,padding:"1px 5px",fontWeight:800}}>{t.badge}</span>}
         </button>
       ))}</nav>
+
+      {ficharOpen&&<Fichar supabase={supabase} empleados={empleados} onCerrar={()=>setFicharOpen(false)} onHorasCreadas={reg=>setHorasTrabajo(prev=>[reg,...prev])}/>}
+      {regRostroEmp&&<RegistrarRostro supabase={supabase} empleado={regRostroEmp} empleados={empleados} onCerrar={()=>setRegRostroEmp(null)}/>}
 
       {/* ── BOTTOM NAV MOBILE ── */}
       <div className="fBnav">
@@ -2840,11 +2851,14 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
             {[
               {k:"empleados",l:"👤 Empleados"},
+              {k:"fichajes",l:"🕐 Fichajes"},
               {k:"horas",l:"⏱ Registrar Horas"},
               {k:"movimientos",l:"💸 Adelantos / Consumos"},
               ...(esAdmin?[{k:"resumen",l:"📊 Resumen & Recibos"}]:[]),
             ].map(t=>(<button key={t.k} style={{...css.btn(personalTab===t.k?"primary":"neutral"),fontSize:12}} onClick={()=>setPersonalTab(t.k)}>{t.l}</button>))}
           </div>
+
+          {personalTab==="fichajes"&&<div style={css.card}><div style={css.cardTitle}>🕐 Fichajes con la cara</div><ListaFichajes supabase={supabase} empleados={empleados} esAdmin={esAdmin||esCompras}/></div>}
 
           {personalTab==="empleados"&&<>
             {(esAdmin||esCompras)&&<div style={css.card}>
@@ -2882,6 +2896,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                     <td style={css.td}>{e.fechaIngreso||"—"}</td>
                     {esAdmin&&<td style={{...css.td,fontWeight:700,color:C.accent}}>{e.valorHora>0?fmt(e.valorHora):"—"}</td>}
                     <td style={css.td}><div style={{display:"flex",gap:5}}>
+                      {(esAdmin||esCompras)&&<button title="Registrar cara para fichar" style={{...css.btn("neutral"),padding:"4px 8px",fontSize:10}} onClick={()=>setRegRostroEmp(e)}>📷</button>}
                       {(esAdmin||esCompras)&&<button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>{setEmpEdit(e.id);setEmpForm({nombre:e.nombre,dni:e.dni,telefono:e.telefono,telefonoAlt:e.telefonoAlt||"",direccion:e.direccion,email:e.email,rol:e.rol,valorHora:String(e.valorHora),fechaIngreso:e.fechaIngreso||"",notas:e.notas||"",categoria:e.categoria||""});setPersonalTab("empleados");}}>✏️</button>}
                       {esAdmin&&<button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarEmpleado(e.id)}>🗑</button>}
                       {esAdmin&&<button style={{...css.btn("info"),padding:"4px 8px",fontSize:10}} onClick={()=>{setReciboEmp(e);setReciboDesde("");setReciboHasta("");setMostrarRecibo(true);}}>🧾</button>}
