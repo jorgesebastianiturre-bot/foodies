@@ -393,6 +393,10 @@ const SYNC_CADA_MS = 15000;   // cada 15 segundos (y al volver a la app)
 export default function FoodiesApp() {
   // ── Login ──
   const [usuario, setUsuario] = useState(null);
+  // Ventas x Día (restaurado de la versión del 3/9)
+  const [vxdFecha, setVxdFecha] = useState("");
+  const [vxdHasta, setVxdHasta] = useState("");
+  const [vxdTurno, setVxdTurno] = useState("");
   const [ficharOpen, setFicharOpen] = useState(false); // fichaje facial de entrada/salida
   const [regRostroEmp, setRegRostroEmp] = useState(null); // empleado al que se le registra la cara
   const [loginUser, setLoginUser] = useState("");
@@ -1878,7 +1882,7 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
     {k:"perdidas",l:"📉 Pérdidas"},
   ] : [
     ...(esVentas?[{k:"nueva",l:"📄 Nueva Factura"},{k:"historial",l:"🗂 Historial"},{k:"transferencias",l:"🔄 Transferencias",badge:transferPendientes.length},{k:"caja",l:"💰 Cierre de Caja"},{k:"cuentacorriente",l:"🏦 Cta. Corriente",badge:saldosCC.filter(x=>x.saldo>0).length}]:[]),
-    ...(esAdmin?[{k:"informes",l:"📊 Informes"}]:[]),
+    ...(esAdmin?[{k:"informes",l:"📊 Informes"},{k:"ventasxdia",l:"📅 Ventas x Día"}]:[]),
     ...(esVentas?[{k:"productos",l:"🛍 Productos"},{k:"clientes",l:"👥 Clientes"}]:[]),
     ...(esCompras||esAdmin?[{k:"compras",l:"📦 Compras",badge:comprasVencidas.length}]:[]),
     {k:"personal",l:"👤 Personal"},
@@ -2844,6 +2848,99 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <div style={css.stat}><div style={css.statV(comprasVencidas.length>0?C.danger:C.success)}>{comprasVencidas.length}</div><div style={css.statL}>CC vencidas (+{DIAS_ALERTA}d)</div></div>
             </div>
           </>}
+        </>}
+
+        {/* ══ VENTAS X DÍA ══ */}
+        {tab==="ventasxdia"&&esAdmin&&<>
+          <div style={css.card}>
+            <div style={css.cardTitle}>📅 Ventas por Día</div>
+            <div style={css.row}>
+              <div style={css.col}><div style={css.lbl}>Desde</div><input style={css.input} type="date" value={vxdFecha} onChange={e=>setVxdFecha(e.target.value)}/></div>
+              <div style={css.col}><div style={css.lbl}>Hasta</div><input style={css.input} type="date" value={vxdHasta} onChange={e=>setVxdHasta(e.target.value)}/></div>
+              <div style={css.col}><div style={css.lbl}>Turno</div>
+                <select style={css.sel} value={vxdTurno} onChange={e=>setVxdTurno(e.target.value)}>
+                  <option value="">— Todos —</option><option>Mañana</option><option>Noche</option>
+                </select>
+              </div>
+              <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn("neutral")} onClick={()=>{setVxdFecha("");setVxdHasta("");setVxdTurno("");}}>✕ Limpiar</button></div>
+            </div>
+          </div>
+          {vxdFecha&&(()=>{
+            const hasta=vxdHasta||vxdFecha;
+            const fechasRango=[];
+            let cur=new Date(vxdFecha+"T12:00:00");
+            const fin=new Date(hasta+"T12:00:00");
+            while(cur<=fin){fechasRango.push(cur.toISOString().slice(0,10));cur.setDate(cur.getDate()+1);}
+            const turnosFiltro=vxdTurno?[vxdTurno]:["Mañana","Noche"];
+            const filas=fechasRango.map(fecha=>{
+              const porTurno=turnosFiltro.map(t=>{
+                const ff=facturas.filter(f=>f.fecha===fecha&&f.turno===t&&f.estado==="pagada");
+                const ef=ff.reduce((s,f)=>s+getEfectivo(f),0);
+                const tr=ff.reduce((s,f)=>s+getTransfer(f),0);
+                const cc=ff.reduce((s,f)=>s+getCC(f),0);
+                const tot=ff.reduce((s,f)=>s+f.total,0);
+                return {turno:t,cant:ff.length,ef,tr,cc,tot};
+              });
+              return {fecha,porTurno,totDia:porTurno.reduce((s,t)=>s+t.tot,0)};
+            }).filter(f=>f.totDia>0||fechasRango.length===1);
+            const totPeriodo=filas.reduce((s,f)=>s+f.totDia,0);
+            const efPeriodo=filas.reduce((s,f)=>s+f.porTurno.reduce((a,t)=>a+t.ef,0),0);
+            const trPeriodo=filas.reduce((s,f)=>s+f.porTurno.reduce((a,t)=>a+t.tr,0),0);
+            const ccPeriodo=filas.reduce((s,f)=>s+f.porTurno.reduce((a,t)=>a+t.cc,0),0);
+            return <div key={vxdFecha+"|"+vxdHasta+"|"+vxdTurno}>
+              <div style={css.card}>
+                <div style={css.cardTitle}>💰 Resumen del período{vxdTurno?` · Turno ${vxdTurno}`:""}</div>
+                <div style={css.grid(140)}>
+                  <div style={css.stat}><div style={css.statV(C.accent)}>{fmt(totPeriodo)}</div><div style={css.statL}>TOTAL</div></div>
+                  <div style={css.stat}><div style={css.statV(C.success)}>{fmt(efPeriodo)}</div><div style={css.statL}>💵 Efectivo</div></div>
+                  <div style={css.stat}><div style={css.statV(C.info)}>{fmt(trPeriodo)}</div><div style={css.statL}>📲 Transferencia</div></div>
+                  {ccPeriodo>0&&<div style={css.stat}><div style={css.statV("#a78bfa")}>{fmt(ccPeriodo)}</div><div style={css.statL}>🏦 CC</div></div>}
+                  <div style={css.stat}><div style={css.statV()}>{filas.length}</div><div style={css.statL}>Días con ventas</div></div>
+                </div>
+              </div>
+              {filas.length===0?<div style={{...css.card,textAlign:"center",padding:"40px",color:C.muted}}>Sin ventas en el período.</div>
+                :<div style={css.card}>
+                  <div style={css.cardTitle}>📋 Detalle por Día{vxdTurno?` — Turno ${vxdTurno}`:""}</div>
+                  <div style={{overflowX:"auto"}}><table style={css.table}>
+                    <thead><tr>
+                      <th style={css.th}>Fecha</th>{!vxdTurno&&<th style={css.th}>Turno</th>}
+                      <th style={css.th}>Fact.</th><th style={{...css.th,color:C.success}}>Efectivo</th>
+                      <th style={{...css.th,color:C.info}}>Transf.</th><th style={{...css.th,color:"#a78bfa"}}>CC</th>
+                      <th style={{...css.th,color:C.accent}}>TOTAL</th>
+                    </tr></thead>
+                    <tbody>
+                      {filas.map(fila=>vxdTurno
+                        ?fila.porTurno.map(t=><tr key={fila.fecha+t.turno}>
+                            <td style={{...css.td,fontWeight:700}}>{fmtFecha(fila.fecha)}</td>
+                            <td style={css.td}>{t.cant}</td>
+                            <td style={{...css.td,color:C.success,fontWeight:700}}>{t.ef>0?fmt(t.ef):"—"}</td>
+                            <td style={{...css.td,color:C.info,fontWeight:700}}>{t.tr>0?fmt(t.tr):"—"}</td>
+                            <td style={{...css.td,color:"#a78bfa",fontWeight:700}}>{t.cc>0?fmt(t.cc):"—"}</td>
+                            <td style={{...css.td,color:C.accent,fontWeight:800}}>{fmt(t.tot)}</td>
+                          </tr>)
+                        :fila.porTurno.filter(t=>t.cant>0).map((t,i,arr)=><tr key={fila.fecha+t.turno} style={{borderTop:i===0?`2px solid ${C.border}`:"none"}}>
+                            {i===0&&<td style={{...css.td,fontWeight:800,verticalAlign:"middle"}} rowSpan={arr.length}>{fmtFecha(fila.fecha)}</td>}
+                            <td style={{...css.td,color:C.muted,fontSize:12}}>{t.turno}</td>
+                            <td style={css.td}>{t.cant}</td>
+                            <td style={{...css.td,color:C.success,fontWeight:700}}>{t.ef>0?fmt(t.ef):"—"}</td>
+                            <td style={{...css.td,color:C.info,fontWeight:700}}>{t.tr>0?fmt(t.tr):"—"}</td>
+                            <td style={{...css.td,color:"#a78bfa",fontWeight:700}}>{t.cc>0?fmt(t.cc):"—"}</td>
+                            <td style={{...css.td,color:C.accent,fontWeight:800}}>{fmt(t.tot)}</td>
+                          </tr>)
+                      )}
+                      <tr style={{borderTop:`2px solid ${C.accent}`,background:"#111"}}>
+                        <td style={{...css.td,fontWeight:900,color:C.accent}} colSpan={vxdTurno?1:2}>TOTAL</td>
+                        <td style={css.td}>{filas.reduce((s,f)=>s+f.porTurno.reduce((a,t)=>a+t.cant,0),0)}</td>
+                        <td style={{...css.td,color:C.success,fontWeight:900}}>{fmt(efPeriodo)}</td>
+                        <td style={{...css.td,color:C.info,fontWeight:900}}>{fmt(trPeriodo)}</td>
+                        <td style={{...css.td,color:"#a78bfa",fontWeight:900}}>{ccPeriodo>0?fmt(ccPeriodo):"—"}</td>
+                        <td style={{...css.td,color:C.accent,fontWeight:900,fontSize:16}}>{fmt(totPeriodo)}</td>
+                      </tr>
+                    </tbody>
+                  </table></div>
+                </div>}
+            </div>;
+          })()}
         </>}
 
         {/* ══ PERSONAL — MÓDULO NUEVO ══ */}
