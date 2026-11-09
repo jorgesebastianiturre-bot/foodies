@@ -516,6 +516,9 @@ export default function FoodiesApp() {
   const [empEdit, setEmpEdit] = useState(null);
   const [horaEmpId, setHoraEmpId] = useState(""); const [horaFecha, setHoraFecha] = useState(hoy()); const [horaEntrada, setHoraEntrada] = useState(""); const [horaSalida, setHoraSalida] = useState(""); const [horaTurno, setHoraTurno] = useState("Noche"); const [horaObs, setHoraObs] = useState("");
   const [movEmpId, setMovEmpId] = useState(""); const [movTipo, setMovTipo] = useState("adelanto"); const [movMonto, setMovMonto] = useState(""); const [movDesc, setMovDesc] = useState(""); const [movFecha, setMovFecha] = useState(hoy());
+  const [movMedio, setMovMedio] = useState("Efectivo"); // adelanto: efectivo o transferencia
+  const [movItems, setMovItems] = useState([]);          // consumo: artículos de la carta
+  const [movBusq, setMovBusq] = useState(""); const [movBusqOpen, setMovBusqOpen] = useState(false); const [movBusqIdx, setMovBusqIdx] = useState(0);
   const [filtEmp, setFiltEmp] = useState(""); const [filtTipoMov, setFiltTipoMov] = useState(""); const [filtMovDesde, setFiltMovDesde] = useState(""); const [filtMovHasta, setFiltMovHasta] = useState("");
   const [reciboEmp, setReciboEmp] = useState(null); const [reciboDesde, setReciboDesde] = useState(""); const [reciboHasta, setReciboHasta] = useState(""); const [mostrarRecibo, setMostrarRecibo] = useState(false);
   const [semanaPersonal, setSemanaPersonal] = useState([]); // {id,empleadoId,semanaInicio,semanaFin,pagado,fechaPago,montoPagado,obs}
@@ -707,7 +710,7 @@ export default function FoodiesApp() {
 
     try {
       const { data:movsDb } = await traerTodo("movimientos_personal","fecha",false);
-      if(movsDb) setMovimientosPersonal(movsDb.map(m=>({id:m.id,empleadoId:m.empleado_id,tipo:m.tipo,monto:parseFloat(m.monto),fecha:m.fecha,descripcion:m.descripcion||""})));
+      if(movsDb) setMovimientosPersonal(movsDb.map(m=>({id:m.id,empleadoId:m.empleado_id,tipo:m.tipo,monto:parseFloat(m.monto),fecha:m.fecha,descripcion:m.descripcion||"",medioPago:m.medio_pago||"",items:m.items||null})));
     } catch(e) { console.error("movimientos:",e); }
 
     try {
@@ -1675,12 +1678,27 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
     setHorasTrabajo(prev=>prev.filter(h=>h.id!==id));
   };
 
+  // Consumo: se arma con los artículos que están a la venta (precio de la carta)
+  const movTotalItems = movItems.reduce((s,i)=>s+i.precio*i.qty,0);
+  const agregarItemMov = (p) => {
+    setMovItems(prev=>{ const ya=prev.find(i=>i.prodId===p.id); return ya?prev.map(i=>i.prodId===p.id?{...i,qty:i.qty+1}:i):[...prev,{prodId:p.id,nombre:p.nombre,precio:p.precio,qty:1}]; });
+    setMovBusq(""); setMovBusqOpen(false); setMovBusqIdx(0);
+  };
+  const cambiarQtyMov = (prodId, d) => setMovItems(prev=>prev.map(i=>i.prodId===prodId?{...i,qty:i.qty+d}:i).filter(i=>i.qty>0));
   const guardarMovimiento = async () => {
-    if(!movEmpId||!movMonto) return;
+    if(!movEmpId){ alert("Elegí el empleado."); return; }
+    const esConsumo = movTipo==="consumo";
+    const monto = esConsumo ? movTotalItems : parseFloat(movMonto);
+    if(esConsumo && !movItems.length){ alert("Agregá al menos un artículo consumido."); return; }
+    if(!esConsumo && !(monto>0)){ alert("Poné el monto del adelanto."); return; }
+    const detalle = esConsumo ? movItems.map(i=>`${i.qty}x ${i.nombre}`).join(", ") : (movMedio==="Efectivo"?"💵 Efectivo":"📲 Transferencia");
+    const descripcion = [detalle, movDesc.trim()].filter(Boolean).join(" · ");
     const id = gid();
-    const mov = {id,empleadoId:movEmpId,tipo:movTipo,monto:parseFloat(movMonto),fecha:movFecha,descripcion:movDesc};
-    await supabase.from("movimientos_personal").insert({id,empleado_id:movEmpId,tipo:movTipo,monto:parseFloat(movMonto),fecha:movFecha,descripcion:movDesc});
-    setMovimientosPersonal(prev=>[mov,...prev]); setMovMonto(""); setMovDesc("");
+    const fila = {id,empleado_id:movEmpId,tipo:movTipo,monto,fecha:movFecha,descripcion,medio_pago:esConsumo?null:movMedio,items:esConsumo?movItems:null};
+    const { error } = await supabase.from("movimientos_personal").insert(fila);
+    if(error){ alert("No se pudo registrar: "+error.message); return; }
+    setMovimientosPersonal(prev=>[{id,empleadoId:movEmpId,tipo:movTipo,monto,fecha:movFecha,descripcion,medioPago:fila.medio_pago,items:fila.items},...prev]);
+    setMovMonto(""); setMovDesc(""); setMovItems([]); setMovBusq("");
   };
 
   // Editar un turno registrado o un adelanto/consumo (se guarda en la base y se refleja en el recibo)
@@ -3056,10 +3074,43 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <div style={css.row}>
                 <div style={css.col}><div style={css.lbl}>Empleado</div><select style={css.sel} value={movEmpId} onChange={e=>setMovEmpId(e.target.value)}><option value="">— Seleccionar —</option>{empleados.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
                 <div style={css.col}><div style={css.lbl}>Tipo</div><select style={css.sel} value={movTipo} onChange={e=>setMovTipo(e.target.value)}><option value="adelanto">💰 Adelanto</option><option value="consumo">🛒 Consumo</option></select></div>
-                <div style={{...css.col,maxWidth:160}}><div style={css.lbl}>Monto ($)</div><input style={css.input} type="number" placeholder="0" value={movMonto} onChange={e=>setMovMonto(e.target.value)}/></div>
+                {movTipo==="adelanto"&&<>
+                  <div style={css.col}><div style={css.lbl}>Cómo se le dio</div>
+                    <div style={{display:"flex",gap:6}}>{[["Efectivo","💵 Efectivo"],["Transferencia","📲 Transferencia"]].map(([v,l])=><button key={v} type="button" onClick={()=>setMovMedio(v)} style={{...css.btn(movMedio===v?"primary":"neutral"),flex:1,padding:"9px 6px",fontSize:12,border:movMedio===v?`2px solid ${C.accent}`:`1px solid ${C.border}`}}>{l}</button>)}</div>
+                  </div>
+                  <div style={{...css.col,maxWidth:160}}><div style={css.lbl}>Monto ($)</div><input style={css.input} type="number" inputMode="numeric" placeholder="0" value={movMonto} onChange={e=>setMovMonto(e.target.value)}/></div>
+                </>}
                 <div style={css.col}><div style={css.lbl}>Fecha {movFecha&&<b style={{color:C.accent}}>· {DIAS_LARGO[new Date(movFecha+"T12:00:00").getDay()]}</b>}</div><input style={css.input} type="date" value={movFecha} onChange={e=>setMovFecha(e.target.value)}/></div>
-                <div style={css.col}><div style={css.lbl}>Descripción</div><input style={css.input} placeholder="Ej: efectivo, galletitas..." value={movDesc} onChange={e=>setMovDesc(e.target.value)}/></div>
-                <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn()} onClick={guardarMovimiento}>✅ Registrar</button></div>
+              </div>
+              {movTipo==="consumo"&&(()=>{
+                const res = buscarProductos(movBusq).slice(0,8);
+                return <div style={{marginTop:4}}>
+                  <div style={css.lbl}>Artículo consumido (de la carta)</div>
+                  <div style={{position:"relative"}}>
+                    <input style={{...css.input,width:"100%",boxSizing:"border-box"}} placeholder="Escribí: mila, coca, empanada…" value={movBusq}
+                      onChange={e=>{setMovBusq(e.target.value);setMovBusqOpen(true);setMovBusqIdx(0);}} onFocus={()=>setMovBusqOpen(true)}
+                      onKeyDown={e=>{ if(e.key==="ArrowDown"){e.preventDefault();setMovBusqIdx(i=>Math.min(i+1,res.length-1));} else if(e.key==="ArrowUp"){e.preventDefault();setMovBusqIdx(i=>Math.max(i-1,0));} else if(e.key==="Enter"&&res[movBusqIdx]){e.preventDefault();agregarItemMov(res[movBusqIdx]);} else if(e.key==="Escape") setMovBusqOpen(false); }}/>
+                    {movBusqOpen&&movBusq&&<div style={{position:"absolute",left:0,right:0,top:"100%",zIndex:50,background:C.card,border:`1px solid ${C.accent}`,borderRadius:8,maxHeight:260,overflowY:"auto",marginTop:2}}>
+                      {res.length===0?<div style={{padding:10,color:C.muted,fontSize:13}}>No hay artículos con ese nombre.</div>:
+                        res.map((p,i)=><div key={p.id} onPointerDown={e=>{e.preventDefault();agregarItemMov(p);}} style={{padding:"10px 12px",cursor:"pointer",display:"flex",justifyContent:"space-between",gap:8,background:i===movBusqIdx?"#2a2a2a":"transparent",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
+                          <span>{p.nombre}</span><b style={{color:C.accent}}>{fmt(p.precio)}</b></div>)}
+                    </div>}
+                  </div>
+                  {movItems.length>0&&<div style={{marginTop:10,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+                    {movItems.map(i=><div key={i.prodId} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
+                      <span style={{flex:1}}>{i.nombre}<div style={{fontSize:11,color:C.muted}}>{fmt(i.precio)} c/u</div></span>
+                      <button type="button" style={{...css.btn("neutral"),padding:"4px 10px"}} onClick={()=>cambiarQtyMov(i.prodId,-1)}>−</button>
+                      <b style={{minWidth:18,textAlign:"center"}}>{i.qty}</b>
+                      <button type="button" style={{...css.btn("neutral"),padding:"4px 10px"}} onClick={()=>cambiarQtyMov(i.prodId,1)}>+</button>
+                      <b style={{minWidth:80,textAlign:"right"}}>{fmt(i.precio*i.qty)}</b>
+                    </div>)}
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"10px",background:"#111",fontWeight:800}}><span>Total consumo</span><span style={{color:C.danger}}>{fmt(movTotalItems)}</span></div>
+                  </div>}
+                </div>;
+              })()}
+              <div style={{...css.row,marginTop:10}}>
+                <div style={css.col}><div style={css.lbl}>Nota (opcional)</div><input style={css.input} placeholder={movTipo==="adelanto"?"Ej: pidió para el alquiler":"Ej: comió en el turno"} value={movDesc} onChange={e=>setMovDesc(e.target.value)}/></div>
+                <div style={{display:"flex",alignItems:"flex-end"}}><button style={css.btn()} onClick={guardarMovimiento}>✅ Registrar {movTipo==="consumo"&&movTotalItems>0?fmt(movTotalItems):movTipo==="adelanto"&&parseFloat(movMonto)>0?fmt(parseFloat(movMonto)):""}</button></div>
               </div>
             </div>
             <div style={css.card}><div style={css.cardTitle}>🔍 Buscar en el historial</div>
