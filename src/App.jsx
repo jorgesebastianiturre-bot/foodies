@@ -1019,8 +1019,15 @@ export default function FoodiesApp() {
     setCadetesFichados(prev => prev.filter(c => c.id!==turnoId));
   };
   useEffect(() => {
-    if(turnoActivo) { cargarCadetesFichados(); const iv = setInterval(cargarCadetesFichados, 15000); return ()=>clearInterval(iv); }
-  }, [turnoActivo]);
+    if(!turnoActivo) return;
+    const load = async () => {
+      const { data } = await supabase.from("turnos_cadete").select("*").eq("fecha", hoy()).is("hora_cierre", null).order("hora_llegada",{ascending:true});
+      if(data) setCadetesFichados(data);
+    };
+    load();
+    const iv = setInterval(load, 15000);
+    return ()=>clearInterval(iv);
+  }, [!!turnoActivo]); // eslint-disable-line
   // ── FACTURA IMPRIMIBLE ──
   const guardarDatosLocal = async () => {
     const { error } = await supabase.from("configuracion").upsert({id:"datos_local",tipo:"datos_local",valor:JSON.stringify(datosLocal),activo:true},{onConflict:"id"});
