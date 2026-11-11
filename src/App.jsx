@@ -447,6 +447,7 @@ export default function FoodiesApp() {
   const [nfReset, setNfReset] = useState(0); // key para resetear SelRapido al emitir
   const [nfCliIdx, setNfCliIdx] = useState(0);
   const [masOpen, setMasOpen] = useState(false);
+  const [alertCorrExp, setAlertCorrExp] = useState(false);
   const [nfOk, setNfOk] = useState(""); // aviso "factura guardada"
   const [modalTransfAviso, setModalTransfAviso] = useState(false); // aviso al abrir turno: transferencias anteriores sin confirmar
   const guardandoNf = useRef(false); // menú "Más" de la barra inferior del celular
@@ -2073,14 +2074,14 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       </div>}
 
       <main style={css.main} className="fMain">
-        {esVentas&&<div style={css.grid(120)}>
+        {esVentas&&<div style={css.grid(120)} className="fHideM">
           <div style={css.stat}><div style={css.statV()}>{facturas.length}</div><div style={css.statL}>Facturas</div></div>
           <div style={css.stat}><div style={css.statV()}>{fmt(facturas.reduce((s,f)=>s+f.total,0))}</div><div style={css.statL}>Total ventas</div></div>
           <div style={css.stat}><div style={css.statV(C.success)}>{fmt(facturas.reduce((s,f)=>s+getEfectivo(f),0))}</div><div style={css.statL}>Efectivo</div></div>
           <div style={css.stat}><div style={css.statV(C.warn)}>{fmt(transferPendientes.reduce((s,f)=>s+montoTransfer(f),0))}</div><div style={css.statL}>Transf. pend.</div></div>
           <div style={css.stat}><div style={css.statV(deudaTotalCC>0?C.info:C.success)}>{fmt(deudaTotalCC)}</div><div style={css.statL}>Deuda CC</div></div>
         </div>}
-        {esCompras&&!esVentas&&<div style={css.grid(140)}>
+        {esCompras&&!esVentas&&<div style={css.grid(140)} className="fHideM">
           <div style={css.stat}><div style={css.statV()}>{compras.length}</div><div style={css.statL}>Compras</div></div>
           <div style={css.stat}><div style={css.statV(C.danger)}>{fmt(compras.reduce((s,c)=>s+c.total,0))}</div><div style={css.statL}>Total comprado</div></div>
           <div style={css.stat}><div style={css.statV(C.warn)}>{fmt(deudaTotalProveedores)}</div><div style={css.statL}>Deuda proveedores</div></div>
@@ -2088,12 +2089,19 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </div>}
 
         {/* ══ ALERTAS DE CORRELATIVIDAD (solo admin) ══ */}
-        {esAdmin&&alertasCorr.length>0&&<div style={{background:"#2a0f0f",border:`1px solid ${C.danger}`,borderRadius:10,padding:"12px 14px",marginBottom:12}}>
-          <div style={{fontWeight:800,color:C.danger,marginBottom:6}}>🚨 {alertasCorr.length} turno{alertasCorr.length>1?"s":""} abierto{alertasCorr.length>1?"s":""} sin seguir la correlatividad</div>
-          {alertasCorr.map(a=><div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${C.border}`,fontSize:12,flexWrap:"wrap"}}>
-            <span><b>{a.vendedor}</b> · {a.turno} {a.fecha} · última #{a.comanda_ultima??"—"} → abrió con <b style={{color:C.danger}}>#{a.comanda_ingresada}</b>{a.diferencia>0?` (faltan ${a.diferencia})`:a.diferencia<0?" (número repetido o hacia atrás)":""}</span>
-            <button style={{...css.btn("neutral"),padding:"4px 10px",fontSize:11}} onClick={()=>marcarAlertaVista(a.id)}>✓ Visto</button>
-          </div>)}
+        {esAdmin&&alertasCorr.length>0&&<div style={{background:"#2a0f0f",border:`1px solid ${C.danger}`,borderRadius:10,marginBottom:12,overflow:"hidden"}}>
+          {/* En móvil: solo el resumen, expandible */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",cursor:"pointer"}} className="fAlertCorrHead" onClick={()=>setAlertCorrExp(e=>!e)}>
+            <div style={{fontWeight:800,color:C.danger,fontSize:13}}>🚨 {alertasCorr.length} turno{alertasCorr.length>1?"s":""} sin correlatividad</div>
+            <span style={{color:C.danger,fontSize:11,fontWeight:700}}>{alertCorrExp?"▲ Ocultar":"▼ Ver"}</span>
+          </div>
+          {/* Detalle: siempre visible en desktop, solo cuando expandido en móvil */}
+          <div className={alertCorrExp?"fAlertCorrDet":"fAlertCorrDet fHideM"} style={{padding:"0 14px 12px"}}>
+            {alertasCorr.map(a=><div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${C.border}`,fontSize:12,flexWrap:"wrap"}}>
+              <span><b>{a.vendedor}</b> · {a.turno} {a.fecha} · última #{a.comanda_ultima??"—"} → abrió con <b style={{color:C.danger}}>#{a.comanda_ingresada}</b>{a.diferencia>0?` (faltan ${a.diferencia})`:a.diferencia<0?" (número repetido o hacia atrás)":""}</span>
+              <button style={{...css.btn("neutral"),padding:"4px 10px",fontSize:11}} onClick={()=>marcarAlertaVista(a.id)}>✓ Visto</button>
+            </div>)}
+          </div>
         </div>}
 
         {/* ══ MODAL CÓDIGO DE AUTORIZACIÓN (correlatividad) ══ */}
@@ -2187,7 +2195,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </div>}
 
         {/* ══ NUEVA FACTURA ══ */}
-        {tab==="nueva"&&esVentas&&!turnoActivo&&avisoTransfPend(pendAnterioresA(taFecha||hoy(), taTurno), "Turnos anteriores")}
+        {tab==="nueva"&&esVentas&&!turnoActivo&&<div className="fHideM">{avisoTransfPend(pendAnterioresA(taFecha||hoy(), taTurno), "Turnos anteriores")}</div>}
         {tab==="nueva"&&esVentas&&!turnoActivo&&(()=>{
           const ult = ultimaComandaAnterior(taFecha||hoy(), taTurno);
           return <div style={{...css.card,border:`2px solid ${C.accent}`}} className="fCard">
@@ -2234,7 +2242,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               ))}
             </div>
           </div>}
-          {avisoTransfPend(transfPendAnteriores, "De turnos anteriores")}
+          <div className="fHideM">{avisoTransfPend(transfPendAnteriores, "De turnos anteriores")}</div>
           {turnoActivo.inicio&&Date.now()-turnoActivo.inicio>14*60*60*1000&&<div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
             <div style={{fontWeight:800,color:"#f59e0b",marginBottom:4}}>⚠️ Este turno está abierto desde hace más de 14 horas</div>
             <div style={{fontSize:12,color:C.muted}}>¿Quedó abierto de un día anterior? Cerralo y abrí el turno de hoy.</div>
