@@ -791,13 +791,15 @@ export default function FoodiesApp() {
   useEffect(() => {
     if(!turnoActivo) return;
     const load = async () => {
-      const { data } = await supabase.from("turnos_cadete").select("*").eq("fecha", hoy()).is("hora_cierre", null).order("hora_llegada",{ascending:true});
+      const fecha = turnoActivo.fecha || hoy();
+      const turno = turnoActivo.turno;
+      const { data } = await supabase.from("turnos_cadete").select("*").eq("fecha", fecha).eq("turno", turno).is("hora_cierre", null).order("hora_llegada",{ascending:true});
       if(data) setCadetesFichados(data);
     };
     load();
     const iv = setInterval(load, 15000);
     return ()=>clearInterval(iv);
-  }, [!!turnoActivo]); // eslint-disable-line
+  }, [turnoActivo?.fecha, turnoActivo?.turno]); // eslint-disable-line
   if(!usuario) return (
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Sora',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap')`}</style>
@@ -1018,7 +1020,10 @@ export default function FoodiesApp() {
 
   // ── CADETES ──
   const cargarCadetesFichados = async () => {
-    const { data } = await supabase.from("turnos_cadete").select("*").eq("fecha", hoy()).is("hora_cierre", null).order("hora_llegada",{ascending:true});
+    if(!turnoActivo) return;
+    const fecha = turnoActivo.fecha || hoy();
+    const turno = turnoActivo.turno;
+    const { data } = await supabase.from("turnos_cadete").select("*").eq("fecha", fecha).eq("turno", turno).is("hora_cierre", null).order("hora_llegada",{ascending:true});
     if(data) setCadetesFichados(data);
   };
   const habilitarCadete = async (turnoId) => {
