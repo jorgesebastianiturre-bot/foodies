@@ -925,7 +925,10 @@ export default function FoodiesApp() {
       if(esEnvio&&!tiene) items = [{id:gid(),prodId:prodEnvio.id,nombre:prodEnvio.nombre,precio:prodEnvio.precio,qty:1},...items];
       if(!esEnvio&&tiene) items = items.filter(i=>i.prodId!==prodEnvio.id);
     }
-    return {...p, tipoVenta:v, cadete:esEnvio?p.cadete:"", items};
+    // Si hay un solo cadete habilitado, asignarlo automáticamente al seleccionar Envío
+    const habilitados = cadetesFichados.filter(c=>c.estado==="habilitado");
+    const cadeteAuto = esEnvio && habilitados.length===1 ? habilitados[0].nombre_cadete : esEnvio ? p.cadete : "";
+    return {...p, tipoVenta:v, cadete:cadeteAuto, items};
   });
   const totalItems = nf.items.reduce((s,i)=>s+i.precio*i.qty,0);
   const totalPagos = (parseFloat(nf.importe1)||0)+(parseFloat(nf.importe2)||0);
@@ -2296,8 +2299,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           {nfOk&&<div style={{background:"#14532d",border:`1px solid ${C.success}`,color:"#dcfce7",borderRadius:10,padding:"12px 14px",marginBottom:10,fontWeight:700,fontSize:14}}>{nfOk}</div>}
           <div style={css.card} className="fCard"><div style={css.cardTitle}>📋 Datos del pedido</div>
             <div style={css.row} className="fRow">
-              <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido id="nf-tipo" key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={cambiarTipoVenta} onEnter={v=>irA(normTxt(v)==="envio"?"nf-cadete":"nf-cliente")} placeholder="Salón, envío, mostrador..."/></div>
-              {nf.tipoVenta==="Envio"&&<div style={css.col}><div style={css.lbl}>Cadete</div><SelRapido id="nf-cadete" key={`ca-${nfReset}`} opciones={cadetes} valor={nf.cadete} onChange={v=>setNf(p=>({...p,cadete:v}))} onEnter={()=>irA("nf-cliente")} placeholder="Escribí el cadete..."/></div>}
+              <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido id="nf-tipo" key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={cambiarTipoVenta} onEnter={v=>irA(normTxt(v)==="envio"&&cadetesFichados.filter(c=>c.estado==="habilitado").length>=2?"nf-cadete":"nf-cliente")} placeholder="Salón, envío, mostrador..."/></div>
+              {nf.tipoVenta==="Envio"&&cadetesFichados.filter(c=>c.estado==="habilitado").length>=2&&<div style={css.col}><div style={css.lbl}>Cadete</div><SelRapido id="nf-cadete" key={`ca-${nfReset}`} opciones={cadetes} valor={nf.cadete} onChange={v=>setNf(p=>({...p,cadete:v}))} onEnter={()=>irA("nf-cliente")} placeholder="Escribí el cadete..."/></div>}
               <div ref={nfCliRef} style={css.col}><div style={css.lbl}>Cliente</div>
                 <div style={{position:"relative"}}>
                   <input id="nf-cliente" style={{...css.input,width:"100%",boxSizing:"border-box"}} className="fInput"
