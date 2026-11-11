@@ -2135,6 +2135,22 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </div>}
 
         {/* ══ MODAL CÓDIGO DE AUTORIZACIÓN (correlatividad) ══ */}
+        {rendPendConf.length>0&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:1100,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 env(safe-area-inset-bottom,16px)"}}>
+          <div style={{background:"#111",border:"2px solid #22c55e",borderRadius:"16px 16px 12px 12px",width:"min(100%,480px)",padding:"18px 16px",boxShadow:"0 -4px 32px rgba(34,197,94,0.25)"}}>
+            <div style={{fontWeight:900,color:"#22c55e",fontSize:15,marginBottom:14,textAlign:"center"}}>💵 El cadete rindió efectivo</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {rendPendConf.map(r=>(
+                <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"10px 12px"}}>
+                  <div>
+                    <div style={{fontWeight:800,color:"#fff",fontSize:14}}>#{r.comanda} · {r.nombre_cadete}</div>
+                    <div style={{fontWeight:700,color:"#22c55e",fontSize:13}}>${Number(r.monto||0).toLocaleString("es-AR")}</div>
+                  </div>
+                  <button style={{...css.btn("success"),padding:"8px 16px",fontSize:13,background:"#15803d",marginBottom:0,whiteSpace:"nowrap"}} onClick={()=>confirmarRendicion(r.id)}>✅ Recibido</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>}
         {modalAutorizacion&&<div style={css.modal}>
           <div style={{...css.modalBox,maxWidth:420}} onClick={e=>e.stopPropagation()}>
             <div style={{textAlign:"center",fontSize:40}}>🔒</div>
@@ -2268,21 +2284,6 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                     ?<button style={{...css.btn(),padding:"4px 12px",fontSize:11}} onClick={()=>habilitarCadete(c.id)}>✅ Habilitar</button>
                     :<span style={{fontSize:11,color:"#4ade80",fontWeight:700}}>✅ Habilitado</span>
                   }
-                </div>
-              ))}
-            </div>
-          </div>}
-          {rendPendConf.length>0&&<div style={{background:"#0d1f0d",border:"1px solid #22c55e",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
-            <div style={{fontWeight:800,color:"#22c55e",fontSize:13,marginBottom:8}}>💵 Efectivo a confirmar ({rendPendConf.length})</div>
-            <div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {rendPendConf.map(r=>(
-                <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"6px 10px"}}>
-                  <div>
-                    <span style={{fontWeight:700,color:"#fff",fontSize:13}}>#{r.comanda}</span>
-                    <span style={{fontSize:11,color:"#999",marginLeft:8}}>{r.nombre_cadete}</span>
-                    <span style={{fontSize:11,color:"#22c55e",marginLeft:8,fontWeight:700}}>${Number(r.monto||0).toLocaleString("es-AR")}</span>
-                  </div>
-                  <button style={{...css.btn("success"),padding:"4px 12px",fontSize:11,background:"#15803d"}} onClick={()=>confirmarRendicion(r.id)}>✅ Recibido</button>
                 </div>
               ))}
             </div>
