@@ -512,7 +512,7 @@ export default function FoodiesApp() {
   const [horasTrabajo, setHorasTrabajo] = useState([]);
   const [movimientosPersonal, setMovimientosPersonal] = useState([]);
   const [personalTab, setPersonalTab] = useState("empleados");
-  const [empForm, setEmpForm] = useState({nombre:"",dni:"",telefono:"",telefonoAlt:"",direccion:"",email:"",rol:"Ayudante",valorHora:"",fechaIngreso:"",notas:"",categoria:""});
+  const [empForm, setEmpForm] = useState({nombre:"",dni:"",telefono:"",telefonoAlt:"",direccion:"",email:"",rol:"Ayudante",valorHora:"",fechaIngreso:"",notas:"",categoria:"",usuario:"",password:""});
   const [empEdit, setEmpEdit] = useState(null);
   const [horaEmpId, setHoraEmpId] = useState(""); const [horaFecha, setHoraFecha] = useState(hoy()); const [horaEntrada, setHoraEntrada] = useState(""); const [horaSalida, setHoraSalida] = useState(""); const [horaTurno, setHoraTurno] = useState("Noche"); const [horaObs, setHoraObs] = useState("");
   const [movEmpId, setMovEmpId] = useState(""); const [movTipo, setMovTipo] = useState("adelanto"); const [movMonto, setMovMonto] = useState(""); const [movDesc, setMovDesc] = useState(""); const [movFecha, setMovFecha] = useState(hoy());
@@ -700,7 +700,7 @@ export default function FoodiesApp() {
     // Personal — tablas nuevas, manejo robusto
     try {
       const { data:empsDb } = await traerTodo("empleados","nombre",true);
-      if(empsDb) setEmpleados(empsDb.map(e=>({id:e.id,nombre:e.nombre,dni:e.dni||"",telefono:e.telefono||"",telefonoAlt:e.telefono_alt||"",direccion:e.direccion||"",email:e.email||"",rol:e.rol||"Ayudante",valorHora:parseFloat(e.valor_hora)||0,fechaIngreso:e.fecha_ingreso||"",notas:e.notas||"",categoria:e.categoria||"",activo:e.activo!==false})));
+      if(empsDb) setEmpleados(empsDb.map(e=>({id:e.id,nombre:e.nombre,dni:e.dni||"",telefono:e.telefono||"",telefonoAlt:e.telefono_alt||"",direccion:e.direccion||"",email:e.email||"",rol:e.rol||"Ayudante",valorHora:parseFloat(e.valor_hora)||0,fechaIngreso:e.fecha_ingreso||"",notas:e.notas||"",categoria:e.categoria||"",activo:e.activo!==false,usuario:e.usuario||"",password:e.password||""})));
     } catch(e) { console.error("empleados:",e); }
 
     try {
@@ -1635,11 +1635,13 @@ td{padding:10px;border-bottom:1px solid #e7e5e4}tr:nth-child(even) td{background
   const guardarEmpleado = async () => {
     if(!empForm.nombre) return;
     const id = empEdit||gid();
-    const datos = {id,nombre:empForm.nombre,dni:empForm.dni,telefono:empForm.telefono,telefonoAlt:empForm.telefonoAlt,direccion:empForm.direccion,email:empForm.email,rol:empForm.rol,valorHora:parseFloat(empForm.valorHora)||0,fechaIngreso:empForm.fechaIngreso,notas:empForm.notas,categoria:empForm.categoria,activo:true};
-    await supabase.from("empleados").upsert({id,nombre:empForm.nombre,dni:empForm.dni,telefono:empForm.telefono,telefono_alt:empForm.telefonoAlt,direccion:empForm.direccion,email:empForm.email,rol:empForm.rol,valor_hora:parseFloat(empForm.valorHora)||0,fecha_ingreso:empForm.fechaIngreso||null,notas:empForm.notas,categoria:empForm.categoria,activo:true},{onConflict:"id"});
+    const datos = {id,nombre:empForm.nombre,dni:empForm.dni,telefono:empForm.telefono,telefonoAlt:empForm.telefonoAlt,direccion:empForm.direccion,email:empForm.email,rol:empForm.rol,valorHora:parseFloat(empForm.valorHora)||0,fechaIngreso:empForm.fechaIngreso,notas:empForm.notas,categoria:empForm.categoria,activo:true,usuario:empForm.usuario||null,password:empForm.password||null};
+    const dbRow = {id,nombre:empForm.nombre,dni:empForm.dni,telefono:empForm.telefono,telefono_alt:empForm.telefonoAlt,direccion:empForm.direccion,email:empForm.email,rol:empForm.rol,valor_hora:parseFloat(empForm.valorHora)||0,fecha_ingreso:empForm.fechaIngreso||null,notas:empForm.notas,categoria:empForm.categoria,activo:true};
+    if(empForm.rol==="Cadete"){ dbRow.usuario=empForm.usuario||null; dbRow.password=empForm.password||null; }
+    await supabase.from("empleados").upsert(dbRow,{onConflict:"id"});
     if(empEdit) setEmpleados(prev=>prev.map(e=>e.id===empEdit?datos:e));
     else setEmpleados(prev=>[...prev,datos]);
-    setEmpForm({nombre:"",dni:"",telefono:"",telefonoAlt:"",direccion:"",email:"",rol:"Ayudante",valorHora:"",fechaIngreso:"",notas:"",categoria:""}); setEmpEdit(null);
+    setEmpForm({nombre:"",dni:"",telefono:"",telefonoAlt:"",direccion:"",email:"",rol:"Ayudante",valorHora:"",fechaIngreso:"",notas:"",categoria:"",usuario:"",password:""}); setEmpEdit(null);
   };
 
   const eliminarEmpleado = async (id) => {
@@ -2993,8 +2995,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <div style={css.row}>
                 <div style={css.col}><div style={css.lbl}>Notas / Observaciones</div><input style={css.input} placeholder="Información adicional del empleado" value={empForm.notas} onChange={e=>setEmpForm(p=>({...p,notas:e.target.value}))}/></div>
               </div>
+              {empForm.rol==="Cadete"&&<div style={{...css.row,background:"rgba(255,165,0,0.08)",border:"1px solid rgba(255,165,0,0.25)",borderRadius:8,padding:"10px 12px",marginTop:4}}>
+                <div style={{width:"100%",marginBottom:6,fontSize:11,color:"#f97316",fontWeight:700}}>🛵 Acceso app Cadete</div>
+                <div style={css.col}><div style={css.lbl}>Usuario (login cadete)</div><input style={css.input} placeholder="ej: agustin" value={empForm.usuario} onChange={e=>setEmpForm(p=>({...p,usuario:e.target.value}))}/></div>
+                <div style={css.col}><div style={css.lbl}>Contraseña (login cadete)</div><input style={css.input} placeholder="••••••••" value={empForm.password} onChange={e=>setEmpForm(p=>({...p,password:e.target.value}))}/></div>
+              </div>}
               <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-                {empEdit&&<button style={css.btn("neutral")} onClick={()=>{setEmpEdit(null);setEmpForm({nombre:"",dni:"",telefono:"",telefonoAlt:"",direccion:"",email:"",rol:"Ayudante",valorHora:"",fechaIngreso:"",notas:"",categoria:""});}}>Cancelar</button>}
+                {empEdit&&<button style={css.btn("neutral")} onClick={()=>{setEmpEdit(null);setEmpForm({nombre:"",dni:"",telefono:"",telefonoAlt:"",direccion:"",email:"",rol:"Ayudante",valorHora:"",fechaIngreso:"",notas:"",categoria:"",usuario:"",password:""});}}>Cancelar</button>}
                 <button style={css.btn()} onClick={guardarEmpleado}>💾 {empEdit?"Guardar cambios":"Agregar empleado"}</button>
               </div>
             </div>}
@@ -3012,7 +3019,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                     {esAdmin&&<td style={{...css.td,fontWeight:700,color:C.accent}}>{e.valorHora>0?fmt(e.valorHora):"—"}</td>}
                     <td style={css.td}><div style={{display:"flex",gap:5}}>
                       {(esAdmin||esCompras)&&<button title="Registrar cara para fichar" style={{...css.btn("neutral"),padding:"4px 8px",fontSize:10}} onClick={()=>setRegRostroEmp(e)}>📷</button>}
-                      {(esAdmin||esCompras)&&<button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>{setEmpEdit(e.id);setEmpForm({nombre:e.nombre,dni:e.dni,telefono:e.telefono,telefonoAlt:e.telefonoAlt||"",direccion:e.direccion,email:e.email,rol:e.rol,valorHora:String(e.valorHora),fechaIngreso:e.fechaIngreso||"",notas:e.notas||"",categoria:e.categoria||""});setPersonalTab("empleados");}}>✏️</button>}
+                      {(esAdmin||esCompras)&&<button style={{...css.btn("warn"),padding:"4px 8px",fontSize:10}} onClick={()=>{setEmpEdit(e.id);setEmpForm({nombre:e.nombre,dni:e.dni,telefono:e.telefono,telefonoAlt:e.telefonoAlt||"",direccion:e.direccion,email:e.email,rol:e.rol,valorHora:String(e.valorHora),fechaIngreso:e.fechaIngreso||"",notas:e.notas||"",categoria:e.categoria||"",usuario:e.usuario||"",password:e.password||""});setPersonalTab("empleados");}}>✏️</button>}
                       {esAdmin&&<button style={{...css.btn("danger"),padding:"4px 8px",fontSize:10}} onClick={()=>eliminarEmpleado(e.id)}>🗑</button>}
                       {esAdmin&&<button style={{...css.btn("info"),padding:"4px 8px",fontSize:10}} onClick={()=>{setReciboEmp(e);setReciboDesde("");setReciboHasta("");setMostrarRecibo(true);}}>🧾</button>}
                     </div></td>
