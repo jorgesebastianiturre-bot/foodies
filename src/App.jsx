@@ -416,6 +416,7 @@ export default function FoodiesApp() {
   const [nf, setNf] = useState(emptyNf());
   // ── Turno (apertura con control de correlatividad) ──
   const [turnoActivo, setTurnoActivo] = useState(leerTurnoGuardado);
+  const [cadetesFichados, setCadetesFichados] = useState([]); // turnos_cadete esperando/habilitado hoy
   const [taFecha, setTaFecha] = useState(hoy());
   const [taTurno, setTaTurno] = useState(turnoPorHora());
   const [taVendedor, setTaVendedor] = useState("");
@@ -1003,6 +1004,23 @@ export default function FoodiesApp() {
     if(!window.confirm("¿Cerrar el turno? Para cargar más ventas vas a tener que abrir uno nuevo.")) return;
     guardarTurno(null);
   };
+
+  // ── CADETES ──
+  const cargarCadetesFichados = async () => {
+    const { data } = await supabase.from("turnos_cadete").select("*").eq("fecha", hoy()).is("hora_cierre", null).order("hora_llegada",{ascending:true});
+    if(data) setCadetesFichados(data);
+  };
+  const habilitarCadete = async (turnoId) => {
+    await supabase.from("turnos_cadete").update({estado:"habilitado"}).eq("id", turnoId);
+    setCadetesFichados(prev => prev.map(c => c.id===turnoId ? {...c, estado:"habilitado"} : c));
+  };
+  const bloquearCadete = async (turnoId) => {
+    await supabase.from("turnos_cadete").update({estado:"bloqueado", hora_cierre: new Date().toISOString()}).eq("id", turnoId);
+    setCadetesFichados(prev => prev.filter(c => c.id!==turnoId));
+  };
+  useEffect(() => {
+    if(turnoActivo) { cargarCadetesFichados(); const iv = setInterval(cargarCadetesFichados, 15000); return ()=>clearInterval(iv); }
+  }, [turnoActivo]);
   // ── FACTURA IMPRIMIBLE ──
   const guardarDatosLocal = async () => {
     const { error } = await supabase.from("configuracion").upsert({id:"datos_local",tipo:"datos_local",valor:JSON.stringify(datosLocal),activo:true},{onConflict:"id"});
@@ -2192,6 +2210,23 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             </div>
             <button style={{...css.btn("neutral"),padding:"8px 14px",fontSize:12}} onClick={cerrarTurno}>⏹ Cerrar turno</button>
           </div>
+          {cadetesFichados.length>0&&<div style={{background:"#1a1200",border:"1px solid #f97316",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+            <div style={{fontWeight:800,color:"#f97316",fontSize:13,marginBottom:8}}>🛵 Cadetes fichados hoy ({cadetesFichados.length})</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {cadetesFichados.map(c=>(
+                <div key={c.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"6px 10px"}}>
+                  <div>
+                    <span style={{fontWeight:700,color:"#fff",fontSize:13}}>{c.nombre_cadete}</span>
+                    <span style={{fontSize:11,color:"#999",marginLeft:8}}>{c.turno} · {c.hora_llegada?new Date(c.hora_llegada).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):""}</span>
+                  </div>
+                  {c.estado==="esperando"
+                    ?<button style={{...css.btn(),padding:"4px 12px",fontSize:11}} onClick={()=>habilitarCadete(c.id)}>✅ Habilitar</button>
+                    :<span style={{fontSize:11,color:"#4ade80",fontWeight:700}}>✅ Habilitado</span>
+                  }
+                </div>
+              ))}
+            </div>
+          </div>}
           {avisoTransfPend(transfPendAnteriores, "De turnos anteriores")}
           {turnoActivo.inicio&&Date.now()-turnoActivo.inicio>14*60*60*1000&&<div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
             <div style={{fontWeight:800,color:"#f59e0b",marginBottom:4}}>⚠️ Este turno está abierto desde hace más de 14 horas</div>
