@@ -417,6 +417,7 @@ export default function FoodiesApp() {
   // ── Turno (apertura con control de correlatividad) ──
   const [turnoActivo, setTurnoActivo] = useState(leerTurnoGuardado);
   const [cadetesFichados, setCadetesFichados] = useState([]); // turnos_cadete esperando/habilitado hoy
+  const [rendPendConf, setRendPendConf] = useState([]); // rendiciones_cadete efectivo rendido sin confirmar
   const [taFecha, setTaFecha] = useState(hoy());
   const [taTurno, setTaTurno] = useState(turnoPorHora());
   const [taVendedor, setTaVendedor] = useState("");
@@ -800,6 +801,25 @@ export default function FoodiesApp() {
     const iv = setInterval(load, 15000);
     return ()=>clearInterval(iv);
   }, [turnoActivo?.fecha, turnoActivo?.turno]); // eslint-disable-line
+
+  // Cargar rendiciones de efectivo pendientes de confirmar
+  useEffect(() => {
+    if(!turnoActivo) return;
+    const load = async () => {
+      const fecha = turnoActivo.fecha || hoy();
+      const turno = turnoActivo.turno;
+      const { data } = await supabase.from("rendiciones_cadete")
+        .select("id,comanda,monto,nombre_cadete,rendicion_hora,hora_entrega")
+        .eq("fecha", fecha).eq("turno", turno)
+        .eq("medio_pago","Efectivo").eq("rendicion_estado","rendido")
+        .is("rendicion_confirmada_hora", null)
+        .order("rendicion_hora",{ascending:true});
+      if(data) setRendPendConf(data);
+    };
+    load();
+    const iv = setInterval(load, 20000);
+    return ()=>clearInterval(iv);
+  }, [turnoActivo?.fecha, turnoActivo?.turno]); // eslint-disable-line
   if(!usuario) return (
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Sora',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap')`}</style>
@@ -1033,6 +1053,11 @@ export default function FoodiesApp() {
   const bloquearCadete = async (turnoId) => {
     await supabase.from("turnos_cadete").update({estado:"bloqueado", hora_cierre: new Date().toISOString()}).eq("id", turnoId);
     setCadetesFichados(prev => prev.filter(c => c.id!==turnoId));
+  };
+  const confirmarRendicion = async (rendId) => {
+    const ahora = new Date().toISOString();
+    await supabase.from("rendiciones_cadete").update({ rendicion_confirmada_por: turnoActivo?.vendedor || usuario, rendicion_confirmada_hora: ahora }).eq("id", rendId);
+    setRendPendConf(prev => prev.filter(r => r.id!==rendId));
   };
   // ── FACTURA IMPRIMIBLE ──
   const guardarDatosLocal = async () => {
@@ -2243,6 +2268,21 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                     ?<button style={{...css.btn(),padding:"4px 12px",fontSize:11}} onClick={()=>habilitarCadete(c.id)}>✅ Habilitar</button>
                     :<span style={{fontSize:11,color:"#4ade80",fontWeight:700}}>✅ Habilitado</span>
                   }
+                </div>
+              ))}
+            </div>
+          </div>}
+          {rendPendConf.length>0&&<div style={{background:"#0d1f0d",border:"1px solid #22c55e",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+            <div style={{fontWeight:800,color:"#22c55e",fontSize:13,marginBottom:8}}>💵 Efectivo a confirmar ({rendPendConf.length})</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {rendPendConf.map(r=>(
+                <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"6px 10px"}}>
+                  <div>
+                    <span style={{fontWeight:700,color:"#fff",fontSize:13}}>#{r.comanda}</span>
+                    <span style={{fontSize:11,color:"#999",marginLeft:8}}>{r.nombre_cadete}</span>
+                    <span style={{fontSize:11,color:"#22c55e",marginLeft:8,fontWeight:700}}>${Number(r.monto||0).toLocaleString("es-AR")}</span>
+                  </div>
+                  <button style={{...css.btn("success"),padding:"4px 12px",fontSize:11,background:"#15803d"}} onClick={()=>confirmarRendicion(r.id)}>✅ Recibido</button>
                 </div>
               ))}
             </div>
