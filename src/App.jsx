@@ -419,6 +419,8 @@ export default function FoodiesApp() {
   const [cadetesFichados, setCadetesFichados] = useState([]); // turnos_cadete esperando/habilitado hoy
   const [rendPendConf, setRendPendConf] = useState([]); // rendiciones_cadete efectivo rendido sin confirmar
   const rendPendPrevLen = useRef(0); // para detectar nuevas rendiciones y disparar sonido
+  const [entregasPendVisto, setEntregasPendVisto] = useState([]); // entregas del cadete sin confirmar visto
+  const entregasPrevLen = useRef(0); // para disparar sonido en nuevas entregas
   const [taFecha, setTaFecha] = useState(hoy());
   const [taTurno, setTaTurno] = useState(turnoPorHora());
   const [taVendedor, setTaVendedor] = useState("");
@@ -844,6 +846,47 @@ export default function FoodiesApp() {
     const iv = setInterval(load, 20000);
     return ()=>clearInterval(iv);
   }, [turnoActivo?.fecha, turnoActivo?.turno]); // eslint-disable-line
+
+  // Cargar entregas recientes del cadete pendientes de "visto" por la vendedora
+  useEffect(() => {
+    if(!turnoActivo) return;
+    const load = async () => {
+      const fecha = turnoActivo.fecha || hoy();
+      const turno = turnoActivo.turno;
+      const { data } = await supabase.from("rendiciones_cadete")
+        .select("id,comanda,monto,monto_efectivo,monto_transferencia,nombre_cadete,hora_entrega,medio_pago")
+        .eq("fecha", fecha).eq("turno", turno)
+        .eq("estado","entregado")
+        .is("entrega_vista_hora", null)
+        .order("hora_entrega",{ascending:true});
+      if(data) {
+        setEntregasPendVisto(prev => {
+          if(data.length > entregasPrevLen.current) {
+            try {
+              const ctx = new (window.AudioContext || window.webkitAudioContext)();
+              const beep = (freq, start, dur) => {
+                const o = ctx.createOscillator(); const g = ctx.createGain();
+                o.connect(g); g.connect(ctx.destination);
+                o.frequency.value = freq; o.type = "sine";
+                g.gain.setValueAtTime(0, ctx.currentTime+start);
+                g.gain.linearRampToValueAtTime(0.35, ctx.currentTime+start+0.02);
+                g.gain.linearRampToValueAtTime(0, ctx.currentTime+start+dur);
+                o.start(ctx.currentTime+start); o.stop(ctx.currentTime+start+dur+0.05);
+              };
+              beep(660, 0, 0.12);
+              beep(880, 0.18, 0.25);
+            } catch(e) {}
+          }
+          entregasPrevLen.current = data.length;
+          return data;
+        });
+      }
+    };
+    load();
+    const iv = setInterval(load, 20000);
+    return ()=>clearInterval(iv);
+  }, [turnoActivo?.fecha, turnoActivo?.turno]); // eslint-disable-line
+
   if(!usuario) return (
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Sora',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap')`}</style>
@@ -1085,6 +1128,12 @@ export default function FoodiesApp() {
     const ahora = new Date().toISOString();
     await supabase.from("rendiciones_cadete").update({ rendicion_confirmada_por: turnoActivo?.vendedor || usuario, rendicion_confirmada_hora: ahora }).eq("id", rendId);
     setRendPendConf(prev => prev.filter(r => r.id!==rendId));
+  };
+  const marcarEntregaVista = async (rendId) => {
+    const ahora = new Date().toISOString();
+    await supabase.from("rendiciones_cadete").update({ entrega_vista_hora: ahora }).eq("id", rendId);
+    setEntregasPendVisto(prev => prev.filter(r => r.id!==rendId));
+    entregasPrevLen.current = Math.max(0, entregasPrevLen.current - 1);
   };
   // ── FACTURA IMPRIMIBLE ──
   const guardarDatosLocal = async () => {
@@ -2161,7 +2210,27 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           </div>
         </div>}
 
-        {/* ══ MODAL CÓDIGO DE AUTORIZACIÓN (correlatividad) ══ */}
+        {/* ══ CARTEL ENTREGA CADETE ══ */}
+        {entregasPendVisto.length>0&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1090,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 env(safe-area-inset-bottom,16px)"}}>
+          <div style={{background:"#111",border:"2px solid #f97316",borderRadius:"16px 16px 12px 12px",width:"min(100%,480px)",padding:"18px 16px",boxShadow:"0 -4px 32px rgba(249,115,22,0.25)"}}>
+            <div style={{fontWeight:900,color:"#f97316",fontSize:15,marginBottom:14,textAlign:"center"}}>📦 El cadete entregó un pedido</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {entregasPendVisto.map(r=>(
+                <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"10px 12px"}}>
+                  <div>
+                    <div style={{fontWeight:800,color:"#fff",fontSize:14}}>#{r.comanda} · {r.nombre_cadete}</div>
+                    <div style={{fontWeight:700,color:"#f97316",fontSize:13}}>
+                      {r.medio_pago} · ${Number(r.monto||0).toLocaleString("es-AR")}
+                    </div>
+                  </div>
+                  <button style={{...css.btn("primary"),padding:"8px 16px",fontSize:13,background:"#c2410c",marginBottom:0,whiteSpace:"nowrap"}} onClick={()=>marcarEntregaVista(r.id)}>✅ Visto</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>}
+
+        {/* ══ CARTEL RENDICIÓN EFECTIVO ══ */}
         {rendPendConf.length>0&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:1100,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 env(safe-area-inset-bottom,16px)"}}>
           <div style={{background:"#111",border:"2px solid #22c55e",borderRadius:"16px 16px 12px 12px",width:"min(100%,480px)",padding:"18px 16px",boxShadow:"0 -4px 32px rgba(34,197,94,0.25)"}}>
             <div style={{fontWeight:900,color:"#22c55e",fontSize:15,marginBottom:14,textAlign:"center"}}>💵 El cadete rindió efectivo</div>
