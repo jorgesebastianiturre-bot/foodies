@@ -418,6 +418,7 @@ export default function FoodiesApp() {
   const [turnoActivo, setTurnoActivo] = useState(leerTurnoGuardado);
   const [cadetesFichados, setCadetesFichados] = useState([]); // turnos_cadete esperando/habilitado hoy
   const [rendPendConf, setRendPendConf] = useState([]); // rendiciones_cadete efectivo rendido sin confirmar
+  const rendPendPrevLen = useRef(0); // para detectar nuevas rendiciones y disparar sonido
   const [taFecha, setTaFecha] = useState(hoy());
   const [taTurno, setTaTurno] = useState(turnoPorHora());
   const [taVendedor, setTaVendedor] = useState("");
@@ -802,19 +803,42 @@ export default function FoodiesApp() {
     return ()=>clearInterval(iv);
   }, [turnoActivo?.fecha, turnoActivo?.turno]); // eslint-disable-line
 
-  // Cargar rendiciones de efectivo pendientes de confirmar
+  // Cargar rendiciones de efectivo pendientes de confirmar (Efectivo o Mixto)
   useEffect(() => {
     if(!turnoActivo) return;
     const load = async () => {
       const fecha = turnoActivo.fecha || hoy();
       const turno = turnoActivo.turno;
       const { data } = await supabase.from("rendiciones_cadete")
-        .select("id,comanda,monto,nombre_cadete,rendicion_hora,hora_entrega")
+        .select("id,comanda,monto,monto_efectivo,nombre_cadete,rendicion_hora,hora_entrega,medio_pago")
         .eq("fecha", fecha).eq("turno", turno)
-        .eq("medio_pago","Efectivo").eq("rendicion_estado","rendido")
+        .in("medio_pago",["Efectivo","Mixto"]).eq("rendicion_estado","rendido")
         .is("rendicion_confirmada_hora", null)
         .order("rendicion_hora",{ascending:true});
-      if(data) setRendPendConf(data);
+      if(data) {
+        setRendPendConf(prev => {
+          // Si hay más rendiciones que antes → disparar alarma
+          if(data.length > rendPendPrevLen.current) {
+            try {
+              const ctx = new (window.AudioContext || window.webkitAudioContext)();
+              const beep = (freq, start, dur) => {
+                const o = ctx.createOscillator(); const g = ctx.createGain();
+                o.connect(g); g.connect(ctx.destination);
+                o.frequency.value = freq; o.type = "sine";
+                g.gain.setValueAtTime(0, ctx.currentTime+start);
+                g.gain.linearRampToValueAtTime(0.4, ctx.currentTime+start+0.02);
+                g.gain.linearRampToValueAtTime(0, ctx.currentTime+start+dur);
+                o.start(ctx.currentTime+start); o.stop(ctx.currentTime+start+dur+0.05);
+              };
+              beep(880, 0,    0.15);
+              beep(880, 0.2,  0.15);
+              beep(1100, 0.4, 0.3);
+            } catch(e) { /* silencioso si el browser bloquea */ }
+          }
+          rendPendPrevLen.current = data.length;
+          return data;
+        });
+      }
     };
     load();
     const iv = setInterval(load, 20000);
@@ -2146,7 +2170,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
                 <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"10px 12px"}}>
                   <div>
                     <div style={{fontWeight:800,color:"#fff",fontSize:14}}>#{r.comanda} · {r.nombre_cadete}</div>
-                    <div style={{fontWeight:700,color:"#22c55e",fontSize:13}}>${Number(r.monto||0).toLocaleString("es-AR")}</div>
+                    <div style={{fontWeight:700,color:"#22c55e",fontSize:13}}>
+                      ${Number(r.monto_efectivo||r.monto||0).toLocaleString("es-AR")} en efectivo
+                      {r.medio_pago==="Mixto"&&<span style={{color:"#86efac",fontSize:11,marginLeft:6}}>(pago mixto)</span>}
+                    </div>
                   </div>
                   <button style={{...css.btn("success"),padding:"8px 16px",fontSize:13,background:"#15803d",marginBottom:0,whiteSpace:"nowrap"}} onClick={()=>confirmarRendicion(r.id)}>✅ Recibido</button>
                 </div>
