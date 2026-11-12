@@ -2194,21 +2194,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           <div style={css.stat}><div style={css.statV(C.accent)}>{empleados.filter(e=>e.activo).length}</div><div style={css.statL}>Empleados activos</div></div>
         </div>}
 
-        {/* ══ ALERTAS DE CORRELATIVIDAD (solo admin) ══ */}
-        {esAdmin&&alertasCorr.length>0&&<div style={{background:"#2a0f0f",border:`1px solid ${C.danger}`,borderRadius:10,marginBottom:12,overflow:"hidden"}}>
-          {/* En móvil: solo el resumen, expandible */}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",cursor:"pointer"}} className="fAlertCorrHead" onClick={()=>setAlertCorrExp(e=>!e)}>
-            <div style={{fontWeight:800,color:C.danger,fontSize:13}}>🚨 {alertasCorr.length} turno{alertasCorr.length>1?"s":""} sin correlatividad</div>
-            <span style={{color:C.danger,fontSize:11,fontWeight:700}}>{alertCorrExp?"▲ Ocultar":"▼ Ver"}</span>
-          </div>
-          {/* Detalle: siempre visible en desktop, solo cuando expandido en móvil */}
-          <div className={alertCorrExp?"fAlertCorrDet":"fAlertCorrDet fHideM"} style={{padding:"0 14px 12px"}}>
-            {alertasCorr.map(a=><div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${C.border}`,fontSize:12,flexWrap:"wrap"}}>
-              <span><b>{a.vendedor}</b> · {a.turno} {a.fecha} · última #{a.comanda_ultima??"—"} → abrió con <b style={{color:C.danger}}>#{a.comanda_ingresada}</b>{a.diferencia>0?` (faltan ${a.diferencia})`:a.diferencia<0?" (número repetido o hacia atrás)":""}</span>
-              <button style={{...css.btn("neutral"),padding:"4px 10px",fontSize:11}} onClick={()=>marcarAlertaVista(a.id)}>✓ Visto</button>
-            </div>)}
-          </div>
-        </div>}
+        {/* alertas de correlatividad: solo en Informes, no en inicio */}
 
         {/* ══ CARTEL ENTREGA CADETE ══ */}
         {entregasPendVisto.length>0&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1090,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 env(safe-area-inset-bottom,16px)"}}>
@@ -2370,29 +2356,27 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             </div>
             <button style={{...css.btn("neutral"),padding:"8px 14px",fontSize:12}} onClick={cerrarTurno}>⏹ Cerrar turno</button>
           </div>
-          {cadetesFichados.length>0&&<div style={{background:"#1a1200",border:"1px solid #f97316",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
-            <div style={{fontWeight:800,color:"#f97316",fontSize:13,marginBottom:8}}>🛵 Cadetes fichados hoy ({cadetesFichados.length})</div>
+          {cadetesFichados.some(c=>c.estado==="esperando")&&<div style={{background:"#1a1200",border:"1px solid #f97316",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+            <div style={{fontWeight:800,color:"#f97316",fontSize:13,marginBottom:8}}>🛵 Cadetes esperando habilitación</div>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {cadetesFichados.map(c=>(
+              {cadetesFichados.filter(c=>c.estado==="esperando").map(c=>(
                 <div key={c.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"6px 10px"}}>
                   <div>
                     <span style={{fontWeight:700,color:"#fff",fontSize:13}}>{c.nombre_cadete}</span>
                     <span style={{fontSize:11,color:"#999",marginLeft:8}}>{c.turno} · {c.hora_llegada?new Date(c.hora_llegada).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):""}</span>
                   </div>
-                  {c.estado==="esperando"
-                    ?<button style={{...css.btn(),padding:"4px 12px",fontSize:11}} onClick={()=>habilitarCadete(c.id)}>✅ Habilitar</button>
-                    :<span style={{fontSize:11,color:"#4ade80",fontWeight:700}}>✅ Habilitado</span>
-                  }
+                  <button style={{...css.btn(),padding:"4px 12px",fontSize:11}} onClick={()=>habilitarCadete(c.id)}>✅ Habilitar</button>
                 </div>
               ))}
             </div>
           </div>}
-          <div className="fHideM">{avisoTransfPend(transfPendAnteriores, "De turnos anteriores")}</div>
           {turnoActivo.inicio&&Date.now()-turnoActivo.inicio>14*60*60*1000&&<div style={{background:"#1a1a0a",border:"1px solid #f59e0b",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
             <div style={{fontWeight:800,color:"#f59e0b",marginBottom:4}}>⚠️ Este turno está abierto desde hace más de 14 horas</div>
             <div style={{fontSize:12,color:C.muted}}>¿Quedó abierto de un día anterior? Cerralo y abrí el turno de hoy.</div>
           </div>}
           {nfOk&&<div style={{background:"#14532d",border:`1px solid ${C.success}`,color:"#dcfce7",borderRadius:10,padding:"12px 14px",marginBottom:10,fontWeight:700,fontSize:14}}>{nfOk}</div>}
+          {/* transferencias pendientes: al final, no al principio */}
+          <div className="fHideM">{avisoTransfPend(transfPendAnteriores, "De turnos anteriores")}</div>
           <div style={css.card} className="fCard"><div style={css.cardTitle}>📋 Datos del pedido</div>
             <div style={css.row} className="fRow">
               <div style={css.col}><div style={css.lbl}>Tipo de Venta</div><SelRapido id="nf-tipo" key={`tv-${nfReset}`} opciones={tiposVenta} valor={nf.tipoVenta} onChange={cambiarTipoVenta} onEnter={v=>irA(normTxt(v)==="envio"&&cadetesFichados.filter(c=>c.estado==="habilitado").length>=2?"nf-cadete":"nf-cliente")} placeholder="Salón, envío, mostrador..."/></div>
